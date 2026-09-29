@@ -185,6 +185,59 @@ Binary format
 For client applications exchanging results in binary format the functions
 declared in binfmt.h can be used for parsing from or rendering to text format
 
+
+postal_code: any country, not just the UK
+------------------------------------------
+Since 2.0.0, this same extension also provides `postal_code`, a 64-bit type
+covering any country's postal code -- additive alongside `postcode`, not a
+replacement for it. Existing `postcode`/`dps` columns, indexes and binary
+data are entirely unaffected by installing or upgrading to 2.0.0.
+
+    SELECT 'US:90210-1234'::postal_code;   -- ZIP5 + optional ZIP+4
+    SELECT 'CA:K1A 0B1'::postal_code;      -- full FSA+LDU
+    SELECT 'CA:T0A'::postal_code;          -- FSA-only is a complete value in
+                                            -- its own right, not a fragment --
+                                            -- see below
+    SELECT postal_code('US', '90210');     -- two-argument constructor for
+                                            -- separate country/code columns,
+                                            -- analogous to PostGIS's
+                                            -- ST_GeomFromText(wkt, srid)
+    SELECT country('US:90210'::postal_code);  -- 'US'
+
+A country code is always required -- `'90210'::postal_code` raises, there is
+no implicit default country the way `::postcode` has none either (unlike
+`postcode`, there's no single obvious country to assume here).
+
+Countries sort in ISO 3166-1 alpha-2 **text** order unconditionally (`'CA:...'`
+always sorts before `'US:...'`), regardless of how any given country's own
+national code happens to be packed internally. Within one country, a more
+precise variant of the same underlying code -- a ZIP5 vs. that same ZIP5 with
+a +4, or a Canadian FSA vs. that same FSA with a full LDU -- interleaves
+immediately next to the value it refines, rather than being grouped apart
+from it by format.
+
+Two formats are implemented so far:
+
+  * **US** -- 5-digit ZIP, with an optional `-NNNN` ZIP+4 add-on.
+  * **CA** -- `ANA NAN` (e.g. `K1A 0B1`). The bare 3-character forward
+    sortation area (e.g. `T0A`) is also a complete, valid value on its own,
+    not a truncated fragment -- real-world data (GeoNames' worldwide postal
+    code table) is overwhelmingly this shape for Canada, not the full 6
+    -character form. D, F, I, O, Q and U never appear in any letter
+    position; W and Z additionally never appear as the first letter.
+
+More countries are added by extending `pc_country_formats[]`/`pc_formats[]`
+in `postal_code_fmt.c`, not by changing the SQL definition. See
+`postal_code.h`/`postal_code_fmt.h` for the bit layout and dispatch design,
+and `sql/postal_code.sql`/`expected/postal_code.out` for the regression
+tests (including a small, checked-in slice of real GEONAMES.world data).
+
+Binary send/recv, a btree opclass, and full comparison operators are
+provided the same as for `postcode`; partial-match (`%`) / indexed-range
+(`range_lower()`/`range_upper()`) support has not been ported to
+`postal_code` yet.
+
+
 Credits
 -------
 Developed up to 1.3.0 by Dave Green at patchsoft.
