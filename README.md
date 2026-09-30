@@ -216,7 +216,7 @@ a +4, or a Canadian FSA vs. that same FSA with a full LDU -- interleaves
 immediately next to the value it refines, rather than being grouped apart
 from it by format.
 
-Two formats are implemented so far:
+Formats implemented so far:
 
   * **US** -- 5-digit ZIP, with an optional `-NNNN` ZIP+4 add-on.
   * **CA** -- `ANA NAN` (e.g. `K1A 0B1`). The bare 3-character forward
@@ -225,12 +225,50 @@ Two formats are implemented so far:
     code table) is overwhelmingly this shape for Canada, not the full 6
     -character form. D, F, I, O, Q and U never appear in any letter
     position; W and Z additionally never appear as the first letter.
+  * **FR** -- 5 digits. GeoNames' own FR data is ~28% contaminated with
+    trailing `CEDEX`/parcel-locker-brand annotations leaked into the postal
+    code column; these are rejected as garbage, not silently swallowed.
+  * **BR** -- 5-digit base + optional 3-digit suffix (`NNNNN-NNN`, the CEP).
+    Unlike US's `+4`, the suffix has no free value to use as an "absent"
+    sentinel (`000` is itself a common real suffix), so presence is a
+    dedicated bit rather than inferred from the value.
+  * **CZ** -- 5 digits, conventionally rendered `NNN NN`.
+  * **LU** -- `L-` + 4 digits; the `L-` is part of the canonical form here
+    (unlike US/CA's own separators, which are input-only conveniences),
+    since real Luxembourg data is essentially always written this way.
 
-More countries are added by extending `pc_country_formats[]`/`pc_formats[]`
-in `postal_code_fmt.c`, not by changing the SQL definition. See
-`postal_code.h`/`postal_code_fmt.h` for the bit layout and dispatch design,
-and `sql/postal_code.sql`/`expected/postal_code.out` for the regression
-tests (including a small, checked-in slice of real GEONAMES.world data).
+### Adding a country
+
+Which format a country uses is a live SQL table
+(`postal_code_country_formats`), not compiled in. Assigning a country to a
+format that already exists needs no rebuild:
+
+    SELECT add_country_format('DE', 'FR');   -- Germany: same plain 5-digit shape as FR/CZ
+    SELECT 'DE:12345'::postal_code;          -- works immediately, no extension reinstall
+    SELECT remove_country_format('DE');      -- undo -- new DE text stops parsing, but
+                                              -- values already stored as DE are unaffected
+                                              -- (decoding uses the format bits already in
+                                              -- the value, never a fresh lookup)
+
+`SELECT * FROM postal_code_formats` lists which formats actually have C
+behind them; `add_country_format()` raises if you name one that doesn't.
+Only a genuinely new format *shape* -- a new digit/letter grouping, new
+exclusion rules -- needs real C (in `postal_code_fmt.c` and a new
+`postal_code_fmt.h` tag) and a new extension version.
+
+One consequence worth knowing: `postal_code_in`/`postal_code(text, text)`
+are declared `STABLE`, not `IMMUTABLE`, precisely because their result can
+change if a country's assignment changes -- so, correctly, PostgreSQL will
+refuse to let you build a functional index over a `::postal_code` cast or
+the two-argument constructor (`CREATE INDEX ... (('US:' || col)::postal_code)`
+errors: "functions in index expression must be marked IMMUTABLE"). Indexing
+the already-typed column itself (`CREATE INDEX ON t (pc)`) is unaffected --
+that only compares stored values, never re-parses text.
+
+See `postal_code.h`/`postal_code_fmt.h` for the bit layout and dispatch
+design, `postal_code_country.c` for the country->format lookup, and
+`sql/postal_code.sql`/`expected/postal_code.out` for the regression tests
+(including a small, checked-in slice of real GEONAMES.world data).
 
 Binary send/recv, a btree opclass, and full comparison operators are
 provided the same as for `postcode`; partial-match (`%`) / indexed-range

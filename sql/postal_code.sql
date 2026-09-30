@@ -1,8 +1,11 @@
 -- postal_code: a 64-bit type for any country's postal code, additive
 -- to (not a replacement for) the GB-only postcode type above. See
 -- postal_code.h/postal_code_fmt.h for the bit layout and dispatch
--- design; postal_code_us.c/postal_code_ca.c are the two formats
--- implemented so far.
+-- design; postal_code_us.c/ca/fr/br/cz/lu.c are the formats
+-- implemented so far. Country->format assignment itself lives in the
+-- postal_code_country_formats SQL table (add_country_format() /
+-- remove_country_format()), not compiled in -- see that section
+-- below.
 
 -- a country prefix is required -- there is no implicit default
 -- country the way postcode's own ::postcode has none either, but
@@ -103,6 +106,44 @@ CREATE INDEX ON addr (pc);
 -- comparisons -- CA sorts before US, and within CA the bare FSA-only
 -- rows interleave correctly against the two full FSA+LDU rows
 SELECT pc FROM addr ORDER BY pc;
+
+-- Country->format assignment is a live SQL table, not compiled in:
+-- assigning a new country to an already-implemented format is a
+-- plain INSERT (via add_country_format()), no rebuild -- only a
+-- genuinely new format shape needs real C. See postal_code_country.c
+-- for how postal_code_in()/postal_code(text,text) look this up.
+
+SELECT name FROM postal_code_formats ORDER BY name;
+SELECT iso2, format_name FROM postal_code_country_formats ORDER BY iso2;
+
+-- unassigned country, existing format shape: fails until assigned
+SELECT 'DE:12345'::postal_code;
+
+-- Germany also uses a plain 5-digit code -- same shape as FR/CZ, so
+-- this needs no new encoder, just an assignment
+SELECT add_country_format('de', 'FR'); -- lower-case cc is normalised
+SELECT 'DE:12345'::postal_code;
+SELECT country('DE:12345'::postal_code);
+
+-- reassigning is idempotent / an upsert, not an error
+SELECT add_country_format('DE', 'FR');
+
+-- unknown format name
+SELECT add_country_format('XX', 'NOPE');
+
+-- malformed country code
+SELECT add_country_format('DEU', 'FR');
+SELECT add_country_format('1E', 'FR');
+
+-- removing an assignment: existing STORED values are unaffected --
+-- decoding uses the format already packed into the value's own bits,
+-- never a fresh lookup -- but parsing NEW text for that country now
+-- fails
+CREATE TEMP TABLE de_before_removal AS SELECT postal_code('DE', '12345') AS pc;
+SELECT remove_country_format('DE');
+SELECT pc FROM de_before_removal; -- still renders fine, unaffected by the removal
+SELECT 'DE:12345'::postal_code;   -- but parsing fresh text for DE fails now
+
 
 -- Binary send/recv (postal_code_recv/postal_code_send, the
 -- COPY ... WITH (FORMAT binary) path) is deliberately not covered

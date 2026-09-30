@@ -14,9 +14,16 @@ static int failures = 0;
    } \
 } while (0)
 
+// Country->format assignment is no longer compiled in (it's a SQL
+// table now, see postal_code_country.c) -- this standalone harness
+// tests each format's own encode/decode logic directly, so it just
+// looks the format up by name. Every format built so far happens to
+// be named after its primary country ("US", "CA", ...), so passing
+// the same string as both cc and format name works out for every
+// call site below; that's a coincidence of what's been built, not
+// something this helper assumes in general.
 static postal_code make (const char *cc, const char *text, bool *ok) {
-   char iso2[2] = { cc[0], cc[1] };
-   pc_format fmt = pc_format_for_country(iso2);
+   pc_format fmt = pc_format_by_name(cc);
    *ok = fmt != PC_FMT_UNKNOWN;
    if (!*ok) return 0;
 
@@ -86,8 +93,10 @@ int main (void) {
    render(ca_w_mid, buf, sizeof buf);
    CHECK(strcmp(buf, "CA:K1W 0B1") == 0);
 
-   // unknown country
-   { char iso2[2] = {'Z','Z'}; CHECK(pc_format_for_country(iso2) == PC_FMT_UNKNOWN); }
+   // unknown format name (country->format assignment itself is a SQL
+   // concern now -- see sql/postal_code.sql for that coverage)
+   CHECK(pc_format_by_name("ZZ") == PC_FMT_UNKNOWN);
+   CHECK(pc_format_by_name(NULL) == PC_FMT_UNKNOWN);
 
    // all-zero payload is a legitimate value in both formats (US
    // "00000" with no +4, CA "A0A 0A0") -- must not be mistaken for

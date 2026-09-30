@@ -40,8 +40,10 @@ typedef enum {
 // ...), each exposing one `const pc_encoder` instance, and wired
 // into pc_formats[] in postal_code_fmt.c. Adding a country whose
 // format already exists (e.g. a second ZIP5+4-style country) needs
-// no new encoder -- just a new pc_country_formats[] row pointing at
-// the existing tag.
+// no new encoder and no rebuild -- just a row in the SQL
+// postal_code_country_formats table (see add_country_format() in
+// the extension's SQL, and postal_code_country.c for the lookup);
+// only a genuinely new format needs new C code here.
 //
 // parse/render/valid all operate on just the 48-bit payload, not
 // the full postal_code: country/format packing and unpacking is
@@ -79,22 +81,15 @@ typedef struct {
 // future gap) is NULL; check before calling through it.
 extern const pc_encoder * const pc_formats[PC_FMT_MAX];
 
-// Which format a given ISO alpha-2 country currently uses for
-// *new* values. Consulted only when producing a fresh value from
-// (country, text) input, e.g. by a postal_code(cc, text)
-// constructor -- decoding an existing stored value always uses the
-// format bits already in that value (see PC_FMT_* comment above),
-// never this table.
-
-typedef struct {
-   char      iso2[2]; // not NUL-terminated; compare both bytes
-   pc_format format;
-} pc_country_format;
-
-extern const pc_country_format pc_country_formats[];
-extern const size_t            pc_country_formats_count;
-
+// Pure lookup by a format's registered name (pc_encoder.name, e.g.
+// "US", "CA") -- linear scan, same convention as areas.h's own area
+// lookup ("won't get large enough to need better than that any time
+// soon"). This is the ONLY piece of country->format resolution that
+// lives here: which country currently maps to which format name is
+// no longer compiled in (see postal_code_country.c) -- this file
+// stays free of any Postgres/SPI dependency, on purpose, so it's
+// still usable from a plain standalone build (test_postal_code.c).
 __attribute__((warn_unused_result))
-pc_format pc_format_for_country (const char iso2[2]);
+pc_format pc_format_by_name (const char *name);
 
 #endif

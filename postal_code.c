@@ -13,6 +13,7 @@
 
 #include "postal_code.h"
 #include "postal_code_fmt.h"
+#include "postal_code_country.h"
 
 #ifndef EXTVERSION
 #error  EXTVERSION is not defined
@@ -46,21 +47,42 @@ Datum postal_code_gte      (PG_FUNCTION_ARGS);
 Datum postal_code_from_parts (PG_FUNCTION_ARGS);
 Datum postal_code_country  (PG_FUNCTION_ARGS);
 
-// Shared by postal_code_in() and postal_code_from_parts(): cc must
-// be exactly 2 letters; returns PC_FMT_UNKNOWN (never a valid
-// format) if it isn't, or isn't a recognised country, so callers
-// have one failure case to check rather than two.
+// Shared by postal_code_in() and postal_code_from_parts(): validates
+// cc's shape, then resolves it to a format via the SQL
+// postal_code_country_formats table (postal_code_country.c) rather
+// than anything compiled in -- see add_country_format() in this
+// extension's SQL. Always either raises or returns a real,
+// implemented format; never returns PC_FMT_UNKNOWN, so callers don't
+// need their own failure check.
 static pc_format lookup_country (const char *cc, size_t len, char out_iso2[2]) {
-   if (len != 2) return PC_FMT_UNKNOWN;
+   if (len != 2)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      errmsg (_("\"%.*s\" is not a two-letter country code"), (int) len, cc)));
 
    char c0 = cc[0], c1 = cc[1];
    if (c0 >= 'a' && c0 <= 'z') c0 = (char) (c0 - 32);
    if (c1 >= 'a' && c1 <= 'z') c1 = (char) (c1 - 32);
-   if (c0 < 'A' || c0 > 'Z' || c1 < 'A' || c1 > 'Z') return PC_FMT_UNKNOWN;
+   if (c0 < 'A' || c0 > 'Z' || c1 < 'A' || c1 > 'Z')
+      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      errmsg (_("\"%.*s\" is not a two-letter country code"), (int) len, cc)));
 
    out_iso2[0] = c0;
    out_iso2[1] = c1;
-   return pc_format_for_country(out_iso2);
+
+   char *format_name = pc_lookup_country_format(out_iso2);
+   if (!format_name)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      errmsg (_("\"%c%c\" is not a supported country code"), c0, c1),
+                      errhint(_("see postal_code_country_formats, or add one with add_country_format()"))));
+
+   pc_format fmt = pc_format_by_name(format_name);
+   if (fmt == PC_FMT_UNKNOWN)
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg (_("country \"%c%c\" is assigned to format \"%s\", "
+                                "which this build of postal_code does not have"),
+                              c0, c1, format_name)));
+
+   return fmt;
 }
 
 // Builds a postal_code from an already-identified country/format
@@ -89,10 +111,6 @@ Datum postal_code_in (PG_FUNCTION_ARGS) {
 
    char iso2[2];
    pc_format fmt = lookup_country(str, (size_t) (colon - str), iso2);
-   if (fmt == PC_FMT_UNKNOWN)
-      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      errmsg (_("\"%.*s\" is not a supported two-letter country code"),
-                              (int) (colon - str), str)));
 
    uint64_t payload;
    if (! pc_formats[fmt]->parse(colon + 1, false, &payload) ||
@@ -214,9 +232,6 @@ Datum postal_code_from_parts (PG_FUNCTION_ARGS) {
 
    char iso2[2];
    pc_format fmt = lookup_country(cc, strlen(cc), iso2);
-   if (fmt == PC_FMT_UNKNOWN)
-      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      errmsg (_("\"%s\" is not a supported two-letter country code"), cc)));
 
    uint64_t payload;
    if (! pc_formats[fmt]->parse(code, false, &payload) ||

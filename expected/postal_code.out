@@ -1,8 +1,11 @@
 -- postal_code: a 64-bit type for any country's postal code, additive
 -- to (not a replacement for) the GB-only postcode type above. See
 -- postal_code.h/postal_code_fmt.h for the bit layout and dispatch
--- design; postal_code_us.c/postal_code_ca.c are the two formats
--- implemented so far.
+-- design; postal_code_us.c/ca/fr/br/cz/lu.c are the formats
+-- implemented so far. Country->format assignment itself lives in the
+-- postal_code_country_formats SQL table (add_country_format() /
+-- remove_country_format()), not compiled in -- see that section
+-- below.
 -- a country prefix is required -- there is no implicit default
 -- country the way postcode's own ::postcode has none either, but
 -- unlike postcode there is no single obvious country to assume here
@@ -13,9 +16,10 @@ LINE 1: SELECT '90210'::postal_code;
 HINT:  no ':' found in "90210"
 -- unrecognised two-letter country
 SELECT 'ZZ:90210'::postal_code;
-ERROR:  "ZZ" is not a supported two-letter country code
+ERROR:  "ZZ" is not a supported country code
 LINE 1: SELECT 'ZZ:90210'::postal_code;
                ^
+HINT:  see postal_code_country_formats, or add one with add_country_format()
 -- basic round trips: US ZIP5, US ZIP5+4, CA full (FSA+LDU)
 SELECT 'US:90210'::postal_code;
  postal_code 
@@ -213,16 +217,109 @@ SELECT pc FROM addr ORDER BY pc;
  CA:T0A
  CA:T0B
  CA:T2E
- CA:V3E
- CA:V8G
  CA:T3T 0E5
+ CA:V3E
  CA:V3Y 0H2
+ CA:V8G
  US:00501
  US:10001
  US:90210
  US:99950
 (18 rows)
 
+-- Country->format assignment is a live SQL table, not compiled in:
+-- assigning a new country to an already-implemented format is a
+-- plain INSERT (via add_country_format()), no rebuild -- only a
+-- genuinely new format shape needs real C. See postal_code_country.c
+-- for how postal_code_in()/postal_code(text,text) look this up.
+SELECT name FROM postal_code_formats ORDER BY name;
+ name 
+------
+ BR
+ CA
+ CZ
+ FR
+ LU
+ US
+(6 rows)
+
+SELECT iso2, format_name FROM postal_code_country_formats ORDER BY iso2;
+ iso2 | format_name 
+------+-------------
+ BR   | BR
+ CA   | CA
+ CZ   | CZ
+ FR   | FR
+ LU   | LU
+ US   | US
+(6 rows)
+
+-- unassigned country, existing format shape: fails until assigned
+SELECT 'DE:12345'::postal_code;
+ERROR:  "DE" is not a supported country code
+LINE 1: SELECT 'DE:12345'::postal_code;
+               ^
+HINT:  see postal_code_country_formats, or add one with add_country_format()
+-- Germany also uses a plain 5-digit code -- same shape as FR/CZ, so
+-- this needs no new encoder, just an assignment
+SELECT add_country_format('de', 'FR'); -- lower-case cc is normalised
+ add_country_format 
+--------------------
+ 
+(1 row)
+
+SELECT 'DE:12345'::postal_code;
+ postal_code 
+-------------
+ DE:12345
+(1 row)
+
+SELECT country('DE:12345'::postal_code);
+ country 
+---------
+ DE
+(1 row)
+
+-- reassigning is idempotent / an upsert, not an error
+SELECT add_country_format('DE', 'FR');
+ add_country_format 
+--------------------
+ 
+(1 row)
+
+-- unknown format name
+SELECT add_country_format('XX', 'NOPE');
+ERROR:  unknown postal_code format NOPE, must be one of: BR, CA, CZ, FR, LU, US
+CONTEXT:  PL/pgSQL function add_country_format(text,text) line 9 at RAISE
+-- malformed country code
+SELECT add_country_format('DEU', 'FR');
+ERROR:  country code must be exactly two letters, got DEU
+CONTEXT:  PL/pgSQL function add_country_format(text,text) line 6 at RAISE
+SELECT add_country_format('1E', 'FR');
+ERROR:  country code must be exactly two letters, got 1E
+CONTEXT:  PL/pgSQL function add_country_format(text,text) line 6 at RAISE
+-- removing an assignment: existing STORED values are unaffected --
+-- decoding uses the format already packed into the value's own bits,
+-- never a fresh lookup -- but parsing NEW text for that country now
+-- fails
+CREATE TEMP TABLE de_before_removal AS SELECT postal_code('DE', '12345') AS pc;
+SELECT remove_country_format('DE');
+ remove_country_format 
+-----------------------
+ 
+(1 row)
+
+SELECT pc FROM de_before_removal; -- still renders fine, unaffected by the removal
+    pc    
+----------
+ DE:12345
+(1 row)
+
+SELECT 'DE:12345'::postal_code;   -- but parsing fresh text for DE fails now
+ERROR:  "DE" is not a supported country code
+LINE 1: SELECT 'DE:12345'::postal_code;
+               ^
+HINT:  see postal_code_country_formats, or add one with add_country_format()
 -- Binary send/recv (postal_code_recv/postal_code_send, the
 -- COPY ... WITH (FORMAT binary) path) is deliberately not covered
 -- here: doing that portably needs a checked-in binary fixture file
