@@ -192,6 +192,33 @@ SELECT to_postal_code('FR-75054 CEDEX 01') AS cedex_ok,
 SELECT code, to_postal_code('FR', code) FROM (VALUES
    ('75001'), ('78078 CITYSSIMO'), ('75054 CEDEX 01'), ('AIR'), ('13001')) v(code);
 
+-- the inequality operators carry PostgreSQL's standard selectivity
+-- estimators, so the planner can use ANALYZE statistics for range
+-- predicates (without them a 1-row range was estimated at 25% of the table)
+SELECT oprname, oprrest::text, oprjoin::text FROM pg_operator
+WHERE oprleft = 'postal_code'::regtype AND oprright = 'postal_code'::regtype
+ORDER BY oprname;
+
+-- is_valid(): true/false instead of an error, e.g. for CHECK constraints
+-- or for finding the rejects in a staging table. NULL in gives NULL out.
+SELECT is_valid('US-90210-1234') AS zip4,
+       is_valid('GB-SW1A') AS outcode,
+       is_valid('FR-75054 CEDEX 01') AS cedex,
+       is_valid('FR-78078 CITYSSIMO') AS brand,
+       is_valid('CA-D1A 0B1') AS excluded_canadian_letter,
+       is_valid('IE-B65') AS bad_eircode_letter,
+       is_valid('US-90210-0000') AS zip4_0000,
+       is_valid('90210') AS no_country,
+       is_valid('ZZ-90210') AS unassigned_country,
+       is_valid('GB-SW1A 1') AS fragment,
+       is_valid(NULL::text) AS null_in;
+SELECT is_valid('US', '90210') AS good, is_valid('US', 'nonsense') AS bad, is_valid('xx', '1') AS unassigned;
+-- agrees with the strict parser on every row of the fixture, good or bad
+SELECT count(*) AS disagreements FROM (VALUES
+   ('US','90210'),('CA','T0A'),('GB','SW1A'),('IE','D6W'),('FR','75054 CEDEX 01'),
+   ('FR','CITYSSIMO'),('CA','D1A 0B1'),('US','1234'),('LU','1311'),('BR','08970-000'),('CZ','11000')) v(cc, code)
+WHERE is_valid(cc, code) IS DISTINCT FROM (to_postal_code(cc, code) IS NOT NULL);
+
 -- Country->format assignment is a live SQL table, not compiled in:
 -- assigning a new country to an already-implemented format is a
 -- plain INSERT (via add_country_format()), no rebuild -- only a

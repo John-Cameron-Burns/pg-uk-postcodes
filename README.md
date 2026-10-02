@@ -274,6 +274,17 @@ afterwards. It comes in the same two forms as the strict constructors:
     INSERT INTO addresses (pc) SELECT to_postal_code(country, code) FROM staging;
     SELECT * FROM staging WHERE to_postal_code(country, code) IS NULL;
 
+`is_valid()` answers the same question as a boolean, in the same two forms, for
+`CHECK` constraints or for finding the rejects in a staging table (NULL in gives
+NULL out, so a `CHECK` lets NULLs through):
+
+    SELECT is_valid('CA-D1A 0B1');                   -- false: D is never used in a Canadian code
+    ALTER TABLE staging ADD CHECK (is_valid(country, code));
+
+It is exactly `to_postal_code(...) IS NOT NULL`, so every per-country rule
+(Canadian excluded letters, Eircode's alphabet, ZIP+4 `0000`, ...) is enforced
+by the same parser at ingest and in `is_valid()` -- they cannot disagree.
+
 ### Adding a country
 
 Which format a country uses is a live SQL table
