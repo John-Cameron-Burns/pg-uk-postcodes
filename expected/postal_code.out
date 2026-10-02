@@ -1,56 +1,73 @@
 -- postal_code: a 64-bit type for any country's postal code, additive
 -- to (not a replacement for) the GB-only postcode type above. See
 -- postal_code.h/postal_code_fmt.h for the bit layout and dispatch
--- design; postal_code_us.c/ca/fr/br/cz/lu.c are the formats
--- implemented so far. Country->format assignment itself lives in the
+-- design; postal_code_us.c/ca/fr/br/cz/lu/gb/ie.c are the
+-- formats implemented so far. Country->format assignment itself lives in the
 -- postal_code_country_formats SQL table (add_country_format() /
 -- remove_country_format()), not compiled in -- see that section
 -- below.
--- a country prefix is required -- there is no implicit default
--- country the way postcode's own ::postcode has none either, but
--- unlike postcode there is no single obvious country to assume here
+-- text form is the UPU one: ISO 3166-1 alpha-2, a hyphen, then the
+-- national code. A country prefix is required -- there is no implicit
+-- default country (unlike postcode, which is UK-only, there is no single
+-- obvious country to assume here).
 SELECT '90210'::postal_code;
-ERROR:  postal_code requires a country prefix, e.g. "US:90210"
+ERROR:  postal_code requires a two-letter country prefix, e.g. "US-90210"
 LINE 1: SELECT '90210'::postal_code;
                ^
-HINT:  no ':' found in "90210"
+HINT:  got "90210"
+SELECT '90210-1234'::postal_code; -- a ZIP+4 hyphen is not a country delimiter
+ERROR:  postal_code requires a two-letter country prefix, e.g. "US-90210"
+LINE 1: SELECT '90210-1234'::postal_code;
+               ^
+HINT:  got "90210-1234"
+SELECT 'U-90210'::postal_code;
+ERROR:  postal_code requires a two-letter country prefix, e.g. "US-90210"
+LINE 1: SELECT 'U-90210'::postal_code;
+               ^
+HINT:  got "U-90210"
+-- the old colon form is not accepted
+SELECT 'US:90210'::postal_code;
+ERROR:  postal_code requires a two-letter country prefix, e.g. "US-90210"
+LINE 1: SELECT 'US:90210'::postal_code;
+               ^
+HINT:  got "US:90210"
 -- unrecognised two-letter country
-SELECT 'ZZ:90210'::postal_code;
+SELECT 'ZZ-90210'::postal_code;
 ERROR:  "ZZ" is not a supported country code
-LINE 1: SELECT 'ZZ:90210'::postal_code;
+LINE 1: SELECT 'ZZ-90210'::postal_code;
                ^
 HINT:  see postal_code_country_formats, or add one with add_country_format()
 -- basic round trips: US ZIP5, US ZIP5+4, CA full (FSA+LDU)
-SELECT 'US:90210'::postal_code;
+SELECT 'US-90210'::postal_code;
  postal_code 
 -------------
- US:90210
+ US-90210
 (1 row)
 
-SELECT 'US:90210-1234'::postal_code;
+SELECT 'US-90210-1234'::postal_code;
   postal_code  
 ---------------
- US:90210-1234
+ US-90210-1234
 (1 row)
 
-SELECT 'CA:K1A 0B1'::postal_code;
+SELECT 'CA-K1A 0B1'::postal_code;
  postal_code 
 -------------
- CA:K1A 0B1
+ CA-K1A 0B1
 (1 row)
 
 -- CA FSA-only: a complete, valid value in its own right, not a
 -- truncated fragment -- see postal_code_ca.c's own comment for why
 -- (real-world GeoNames data is overwhelmingly this shape for CA)
-SELECT 'CA:T0A'::postal_code;
+SELECT 'CA-T0A'::postal_code;
  postal_code 
 -------------
- CA:T0A
+ CA-T0A
 (1 row)
 
 -- tolerant of case and of the FSA/LDU space being omitted, same
 -- spirit as postcode's own text parser
-SELECT 'ca:k1a0b1'::postal_code = 'CA:K1A 0B1'::postal_code;
+SELECT 'ca-k1a0b1'::postal_code = 'CA-K1A 0B1'::postal_code;
  ?column? 
 ----------
  t
@@ -58,50 +75,50 @@ SELECT 'ca:k1a0b1'::postal_code = 'CA:K1A 0B1'::postal_code;
 
 -- 4 or 5 characters is neither a valid FSA-only nor a complete
 -- FSA+LDU value
-SELECT 'CA:T0A0'::postal_code;
+SELECT 'CA-T0A0'::postal_code;
 ERROR:  cannot parse "T0A0" as a CA postal code
-LINE 1: SELECT 'CA:T0A0'::postal_code;
+LINE 1: SELECT 'CA-T0A0'::postal_code;
                ^
 -- 0000 is not a real ZIP+4 add-on code (0 is reserved internally to
 -- mean "no +4 supplied")
-SELECT 'US:90210-0000'::postal_code;
+SELECT 'US-90210-0000'::postal_code;
 ERROR:  cannot parse "90210-0000" as a US postal code
-LINE 1: SELECT 'US:90210-0000'::postal_code;
+LINE 1: SELECT 'US-90210-0000'::postal_code;
                ^
 -- excluded Canadian letters: D/F/I/O/Q/U never appear in any letter
 -- position; W/Z additionally never appear as the first letter
-SELECT 'CA:D1A 0B1'::postal_code;
+SELECT 'CA-D1A 0B1'::postal_code;
 ERROR:  cannot parse "D1A 0B1" as a CA postal code
-LINE 1: SELECT 'CA:D1A 0B1'::postal_code;
+LINE 1: SELECT 'CA-D1A 0B1'::postal_code;
                ^
-SELECT 'CA:W1A 0B1'::postal_code;
+SELECT 'CA-W1A 0B1'::postal_code;
 ERROR:  cannot parse "W1A 0B1" as a CA postal code
-LINE 1: SELECT 'CA:W1A 0B1'::postal_code;
+LINE 1: SELECT 'CA-W1A 0B1'::postal_code;
                ^
-SELECT 'CA:K1W 0B1'::postal_code; -- W is fine outside the first position
+SELECT 'CA-K1W 0B1'::postal_code; -- W is fine outside the first position
  postal_code 
 -------------
- CA:K1W 0B1
+ CA-K1W 0B1
 (1 row)
 
 -- all-zero payload is a legitimate value in both formats (US
 -- "00000" with no +4, CA "A0A 0A0") -- regression guard for a real
 -- bug caught while wiring up this type: parse() used to signal
 -- failure by returning 0, which collides with these
-SELECT 'US:00000'::postal_code;
+SELECT 'US-00000'::postal_code;
  postal_code 
 -------------
- US:00000
+ US-00000
 (1 row)
 
-SELECT 'CA:A0A 0A0'::postal_code;
+SELECT 'CA-A0A 0A0'::postal_code;
  postal_code 
 -------------
- CA:A0A 0A0
+ CA-A0A 0A0
 (1 row)
 
 -- country() accessor
-SELECT country('US:90210'::postal_code), country('CA:K1A 0B1'::postal_code);
+SELECT country('US-90210'::postal_code), country('CA-K1A 0B1'::postal_code);
  country | country 
 ---------+---------
  US      | CA
@@ -113,13 +130,106 @@ SELECT country('US:90210'::postal_code), country('CA:K1A 0B1'::postal_code);
 SELECT postal_code('US', '90210-1234');
   postal_code  
 ---------------
- US:90210-1234
+ US-90210-1234
 (1 row)
 
 SELECT postal_code('ca', 'k1a0b1'); -- case-insensitive country too
  postal_code 
 -------------
- CA:K1A 0B1
+ CA-K1A 0B1
+(1 row)
+
+-- Outcode-only is a complete, valid value wherever a country has a
+-- distinct outcode/incode structure (GB, IE, CA, US); where the leading
+-- digits are only implicitly an outcode (FR, CZ, LU) the full code is
+-- required. GeoNames agrees: every one of its GB (27,450) and IE (139)
+-- rows is outcode-only.
+SELECT 'GB-SW1A'::postal_code, 'GB-LS24'::postal_code, 'GB-M1'::postal_code;
+ postal_code | postal_code | postal_code 
+-------------+-------------+-------------
+ GB-SW1A     | GB-LS24     | GB-M1
+(1 row)
+
+SELECT 'GB-SW1A 1AA'::postal_code, 'gb-sw1a1aa'::postal_code;
+ postal_code | postal_code 
+-------------+-------------
+ GB-SW1A 1AA | GB-SW1A 1AA
+(1 row)
+
+SELECT 'IE-A65'::postal_code, 'IE-D6W'::postal_code, 'IE-A65 F4E2'::postal_code, 'ie-a65f4e2'::postal_code;
+ postal_code | postal_code | postal_code | postal_code 
+-------------+-------------+-------------+-------------
+ IE-A65      | IE-D6W      | IE-A65 F4E2 | IE-A65 F4E2
+(1 row)
+
+SELECT 'US-90210'::postal_code, 'CA-K1A'::postal_code;
+ postal_code | postal_code 
+-------------+-------------
+ US-90210    | CA-K1A
+(1 row)
+
+SELECT 'BR-08970'::postal_code, 'BR-08970-000'::postal_code;
+ postal_code | postal_code  
+-------------+--------------
+ BR-08970    | BR-08970-000
+(1 row)
+
+SELECT 'FR-75001'::postal_code, 'CZ-110 00'::postal_code, 'CZ-11000'::postal_code, 'LU-L-1311'::postal_code, 'LU-1311'::postal_code;
+ postal_code | postal_code | postal_code | postal_code | postal_code 
+-------------+-------------+-------------+-------------+-------------
+ FR-75001    | CZ-110 00   | CZ-110 00   | LU-L-1311   | LU-L-1311
+(1 row)
+
+-- ... but a fragment is not a postcode: area-only, or an outcode plus a
+-- sector with no unit, or a prefix of a country whose outcode is implicit
+SELECT 'GB-SW'::postal_code;
+ERROR:  cannot parse "SW" as a GB postal code
+LINE 1: SELECT 'GB-SW'::postal_code;
+               ^
+SELECT 'GB-SW1A 1'::postal_code;
+ERROR:  cannot parse "SW1A 1" as a GB postal code
+LINE 1: SELECT 'GB-SW1A 1'::postal_code;
+               ^
+SELECT 'FR-750'::postal_code;
+ERROR:  cannot parse "750" as a FR postal code
+LINE 1: SELECT 'FR-750'::postal_code;
+               ^
+SELECT 'CZ-110'::postal_code;
+ERROR:  cannot parse "110" as a CZ postal code
+LINE 1: SELECT 'CZ-110'::postal_code;
+               ^
+SELECT 'LU-L-13'::postal_code;
+ERROR:  cannot parse "L-13" as a LU postal code
+LINE 1: SELECT 'LU-L-13'::postal_code;
+               ^
+-- Eircode letters are limited to A C D E F H K N P R T V W X Y, and only
+-- D6W breaks the letter-digit-digit routing key shape
+SELECT 'IE-B65'::postal_code;
+ERROR:  cannot parse "B65" as a IE postal code
+LINE 1: SELECT 'IE-B65'::postal_code;
+               ^
+SELECT 'IE-D6X'::postal_code;
+ERROR:  cannot parse "D6X" as a IE postal code
+LINE 1: SELECT 'IE-D6X'::postal_code;
+               ^
+SELECT 'IE-A65 F4O2'::postal_code;
+ERROR:  cannot parse "A65 F4O2" as a IE postal code
+LINE 1: SELECT 'IE-A65 F4O2'::postal_code;
+               ^
+SELECT 'IE-A65 F4E'::postal_code;
+ERROR:  cannot parse "A65 F4E" as a IE postal code
+LINE 1: SELECT 'IE-A65 F4E'::postal_code;
+               ^
+-- an outcode sorts immediately before every full code inside it, and
+-- outcodes still sort against each other
+SELECT 'GB-SW1A'::postal_code < 'GB-SW1A 1AA'::postal_code AS outcode_before_its_codes,
+       'GB-SW1A 2AA'::postal_code < 'GB-SW1B'::postal_code AS outcodes_still_ordered,
+       'IE-A65'::postal_code < 'IE-A65 F4E2'::postal_code AS routing_key_before_eircode,
+       'IE-A65 F4E2'::postal_code < 'IE-A66'::postal_code AS routing_key_dominates,
+       'BR-08970-999'::postal_code < 'BR-08971'::postal_code AS br_base_dominates_suffix;
+ outcode_before_its_codes | outcodes_still_ordered | routing_key_before_eircode | routing_key_dominates | br_base_dominates_suffix 
+--------------------------+------------------------+----------------------------+-----------------------+--------------------------
+ t                        | t                      | t                          | t                     | t
 (1 row)
 
 -- Ordering. This is the property the whole design hinges on:
@@ -128,25 +238,25 @@ SELECT postal_code('ca', 'k1a0b1'); -- case-insensitive country too
 --      code (a ZIP5+4, or a CA FSA's full LDU) interleaves immediately
 --      after the coarser value it refines, rather than being grouped
 --      apart from it by format
-SELECT 'CA:K1A 0B1'::postal_code < 'US:90210'::postal_code AS ca_before_us;
+SELECT 'CA-K1A 0B1'::postal_code < 'US-90210'::postal_code AS ca_before_us;
  ca_before_us 
 --------------
  t
 (1 row)
 
-SELECT 'US:90210'::postal_code < 'US:90210-1234'::postal_code AS zip5_before_plus4;
+SELECT 'US-90210'::postal_code < 'US-90210-1234'::postal_code AS zip5_before_plus4;
  zip5_before_plus4 
 -------------------
  t
 (1 row)
 
-SELECT 'US:90210-9999'::postal_code < 'US:90211'::postal_code AS interleaves_by_value_not_format;
+SELECT 'US-90210-9999'::postal_code < 'US-90211'::postal_code AS interleaves_by_value_not_format;
  interleaves_by_value_not_format 
 ---------------------------------
  t
 (1 row)
 
-SELECT 'CA:T0A'::postal_code < 'CA:T0A 0A0'::postal_code AS fsa_before_its_own_ldu;
+SELECT 'CA-T0A'::postal_code < 'CA-T0A 0A0'::postal_code AS fsa_before_its_own_ldu;
  fsa_before_its_own_ldu 
 ------------------------
  t
@@ -170,32 +280,64 @@ INSERT INTO geonames_sample VALUES
    ('CA', 'T2E'), ('CA', 'E5L'), ('CA', 'G9X'), ('CA', 'V3E'),
    ('CA', 'L6Y'), ('CA', 'L7E'), ('CA', 'T0A'), ('CA', 'T0B'),
    ('CA', 'T3T 0E5'), -- one of the very few full FSA+LDU rows in the table
-   ('CA', 'V3Y 0H2');
+   ('CA', 'V3Y 0H2'),
+   ('GB', 'TD5'), ('GB', 'KA18'), ('GB', 'EC2V'), ('GB', 'PH26'), ('GB', 'HP27'),
+   ('GB', 'PE22'), ('GB', 'IP12'), ('GB', 'M24'),
+   ('IE', 'F28'), ('IE', 'P72'), ('IE', 'R21'), ('IE', 'K67'), ('IE', 'D14'),
+   ('IE', 'E41'), ('IE', 'H12'), ('IE', 'D6W'),
+   ('FR', '75001'), ('FR', '04004'),
+   ('BR', '08970-000'), ('BR', '29640-000'),
+   ('CZ', '507 52'), ('CZ', '751 25'),
+   ('LU', 'L-1311'), ('LU', 'L-4942');
 -- every row in the fixture must parse and round-trip cleanly
 SELECT country_code, national_code, postal_code(country_code, national_code)
 FROM geonames_sample
 ORDER BY country_code, national_code;
- country_code | national_code | postal_code 
---------------+---------------+-------------
- CA           | B6L           | CA:B6L
- CA           | E5L           | CA:E5L
- CA           | G9X           | CA:G9X
- CA           | L6Y           | CA:L6Y
- CA           | L7E           | CA:L7E
- CA           | R0A           | CA:R0A
- CA           | R7B           | CA:R7B
- CA           | T0A           | CA:T0A
- CA           | T0B           | CA:T0B
- CA           | T2E           | CA:T2E
- CA           | T3T 0E5       | CA:T3T 0E5
- CA           | V3E           | CA:V3E
- CA           | V3Y 0H2       | CA:V3Y 0H2
- CA           | V8G           | CA:V8G
- US           | 00501         | US:00501
- US           | 10001         | US:10001
- US           | 90210         | US:90210
- US           | 99950         | US:99950
-(18 rows)
+ country_code | national_code | postal_code  
+--------------+---------------+--------------
+ BR           | 08970-000     | BR-08970-000
+ BR           | 29640-000     | BR-29640-000
+ CA           | B6L           | CA-B6L
+ CA           | E5L           | CA-E5L
+ CA           | G9X           | CA-G9X
+ CA           | L6Y           | CA-L6Y
+ CA           | L7E           | CA-L7E
+ CA           | R0A           | CA-R0A
+ CA           | R7B           | CA-R7B
+ CA           | T0A           | CA-T0A
+ CA           | T0B           | CA-T0B
+ CA           | T2E           | CA-T2E
+ CA           | T3T 0E5       | CA-T3T 0E5
+ CA           | V3E           | CA-V3E
+ CA           | V3Y 0H2       | CA-V3Y 0H2
+ CA           | V8G           | CA-V8G
+ CZ           | 507 52        | CZ-507 52
+ CZ           | 751 25        | CZ-751 25
+ FR           | 04004         | FR-04004
+ FR           | 75001         | FR-75001
+ GB           | EC2V          | GB-EC2V
+ GB           | HP27          | GB-HP27
+ GB           | IP12          | GB-IP12
+ GB           | KA18          | GB-KA18
+ GB           | M24           | GB-M24
+ GB           | PE22          | GB-PE22
+ GB           | PH26          | GB-PH26
+ GB           | TD5           | GB-TD5
+ IE           | D14           | IE-D14
+ IE           | D6W           | IE-D6W
+ IE           | E41           | IE-E41
+ IE           | F28           | IE-F28
+ IE           | H12           | IE-H12
+ IE           | K67           | IE-K67
+ IE           | P72           | IE-P72
+ IE           | R21           | IE-R21
+ LU           | L-1311        | LU-L-1311
+ LU           | L-4942        | LU-L-4942
+ US           | 00501         | US-00501
+ US           | 10001         | US-10001
+ US           | 90210         | US-90210
+ US           | 99950         | US-99950
+(42 rows)
 
 CREATE TABLE addr (id serial primary key, pc postal_code);
 INSERT INTO addr (pc)
@@ -205,27 +347,51 @@ CREATE INDEX ON addr (pc);
 -- comparisons -- CA sorts before US, and within CA the bare FSA-only
 -- rows interleave correctly against the two full FSA+LDU rows
 SELECT pc FROM addr ORDER BY pc;
-     pc     
-------------
- CA:B6L
- CA:E5L
- CA:G9X
- CA:L6Y
- CA:L7E
- CA:R0A
- CA:R7B
- CA:T0A
- CA:T0B
- CA:T2E
- CA:T3T 0E5
- CA:V3E
- CA:V3Y 0H2
- CA:V8G
- US:00501
- US:10001
- US:90210
- US:99950
-(18 rows)
+      pc      
+--------------
+ BR-08970-000
+ BR-29640-000
+ CA-B6L
+ CA-E5L
+ CA-G9X
+ CA-L6Y
+ CA-L7E
+ CA-R0A
+ CA-R7B
+ CA-T0A
+ CA-T0B
+ CA-T2E
+ CA-T3T 0E5
+ CA-V3E
+ CA-V3Y 0H2
+ CA-V8G
+ CZ-507 52
+ CZ-751 25
+ FR-04004
+ FR-75001
+ GB-EC2V
+ GB-HP27
+ GB-IP12
+ GB-KA18
+ GB-M24
+ GB-PE22
+ GB-PH26
+ GB-TD5
+ IE-D14
+ IE-D6W
+ IE-E41
+ IE-F28
+ IE-H12
+ IE-K67
+ IE-P72
+ IE-R21
+ LU-L-1311
+ LU-L-4942
+ US-00501
+ US-10001
+ US-90210
+ US-99950
+(42 rows)
 
 -- Country->format assignment is a live SQL table, not compiled in:
 -- assigning a new country to an already-implemented format is a
@@ -239,9 +405,11 @@ SELECT name FROM postal_code_formats ORDER BY name;
  CA
  CZ
  FR
+ GB
+ IE
  LU
  US
-(6 rows)
+(8 rows)
 
 SELECT iso2, format_name FROM postal_code_country_formats ORDER BY iso2;
  iso2 | format_name 
@@ -250,14 +418,19 @@ SELECT iso2, format_name FROM postal_code_country_formats ORDER BY iso2;
  CA   | CA
  CZ   | CZ
  FR   | FR
+ GB   | GB
+ GG   | GB
+ IE   | IE
+ IM   | GB
+ JE   | GB
  LU   | LU
  US   | US
-(6 rows)
+(11 rows)
 
 -- unassigned country, existing format shape: fails until assigned
-SELECT 'DE:12345'::postal_code;
+SELECT 'DE-12345'::postal_code;
 ERROR:  "DE" is not a supported country code
-LINE 1: SELECT 'DE:12345'::postal_code;
+LINE 1: SELECT 'DE-12345'::postal_code;
                ^
 HINT:  see postal_code_country_formats, or add one with add_country_format()
 -- Germany also uses a plain 5-digit code -- same shape as FR/CZ, so
@@ -268,13 +441,13 @@ SELECT add_country_format('de', 'FR'); -- lower-case cc is normalised
  
 (1 row)
 
-SELECT 'DE:12345'::postal_code;
+SELECT 'DE-12345'::postal_code;
  postal_code 
 -------------
- DE:12345
+ DE-12345
 (1 row)
 
-SELECT country('DE:12345'::postal_code);
+SELECT country('DE-12345'::postal_code);
  country 
 ---------
  DE
@@ -289,7 +462,7 @@ SELECT add_country_format('DE', 'FR');
 
 -- unknown format name
 SELECT add_country_format('XX', 'NOPE');
-ERROR:  unknown postal_code format NOPE, must be one of: BR, CA, CZ, FR, LU, US
+ERROR:  unknown postal_code format NOPE, must be one of: BR, CA, CZ, FR, GB, IE, LU, US
 CONTEXT:  PL/pgSQL function add_country_format(text,text) line 9 at RAISE
 -- malformed country code
 SELECT add_country_format('DEU', 'FR');
@@ -312,12 +485,12 @@ SELECT remove_country_format('DE');
 SELECT pc FROM de_before_removal; -- still renders fine, unaffected by the removal
     pc    
 ----------
- DE:12345
+ DE-12345
 (1 row)
 
-SELECT 'DE:12345'::postal_code;   -- but parsing fresh text for DE fails now
+SELECT 'DE-12345'::postal_code;   -- but parsing fresh text for DE fails now
 ERROR:  "DE" is not a supported country code
-LINE 1: SELECT 'DE:12345'::postal_code;
+LINE 1: SELECT 'DE-12345'::postal_code;
                ^
 HINT:  see postal_code_country_formats, or add one with add_country_format()
 -- Binary send/recv (postal_code_recv/postal_code_send, the

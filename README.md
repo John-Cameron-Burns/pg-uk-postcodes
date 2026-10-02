@@ -193,28 +193,36 @@ covering any country's postal code -- additive alongside `postcode`, not a
 replacement for it. Existing `postcode`/`dps` columns, indexes and binary
 data are entirely unaffected by installing or upgrading to 2.0.0.
 
-    SELECT 'US:90210-1234'::postal_code;   -- ZIP5 + optional ZIP+4
-    SELECT 'CA:K1A 0B1'::postal_code;      -- full FSA+LDU
-    SELECT 'CA:T0A'::postal_code;          -- FSA-only is a complete value in
-                                            -- its own right, not a fragment --
-                                            -- see below
+    SELECT 'US-90210-1234'::postal_code;   -- ZIP5 + optional ZIP+4
+    SELECT 'CA-K1A 0B1'::postal_code;      -- full FSA+LDU
+    SELECT 'CA-T0A'::postal_code;          -- the outcode alone is a complete value
+    SELECT 'GB-SW1A'::postal_code;         -- ... as it is for GB and IE
     SELECT postal_code('US', '90210');     -- two-argument constructor for
                                             -- separate country/code columns,
                                             -- analogous to PostGIS's
                                             -- ST_GeomFromText(wkt, srid)
-    SELECT country('US:90210'::postal_code);  -- 'US'
+    SELECT country('US-90210'::postal_code);  -- 'US'
 
-A country code is always required -- `'90210'::postal_code` raises, there is
-no implicit default country the way `::postcode` has none either (unlike
-`postcode`, there's no single obvious country to assume here).
+The text form follows the UPU recommendation: the ISO 3166-1 alpha-2 country,
+a hyphen, then the national code (`CC-code`). A country code is always
+required -- `'90210'::postal_code` raises, there is no implicit default
+country. Because the country is always exactly two characters, the *first*
+hyphen is the delimiter even when the national code has hyphens of its own
+(`US-90210-1234`, `BR-01310-100`). The colon form (`US:90210`) is not accepted.
 
-Countries sort in ISO 3166-1 alpha-2 **text** order unconditionally (`'CA:...'`
-always sorts before `'US:...'`), regardless of how any given country's own
+**Outcode-only is a valid postcode** wherever a country has a distinct
+outcode/incode structure -- GB, IE, CA and US (`GB-SW1A`, `IE-A65`,
+`CA-K1A`, `US-90210`). Real data backs this: every one of GeoNames' 27,450 GB
+rows and all 139 IE rows is outcode-only. Where the leading digits are only
+implicitly an outcode (FR, CZ, LU) the full code is required. What is *not*
+valid is the in-between: `GB-SW1A 1` (a sector with no unit) is a fragment.
+
+Countries sort in ISO 3166-1 alpha-2 **text** order unconditionally (`'CA-...'`
+always sorts before `'US-...'`), regardless of how any given country's own
 national code happens to be packed internally. Within one country, a more
 precise variant of the same underlying code -- a ZIP5 vs. that same ZIP5 with
-a +4, or a Canadian FSA vs. that same FSA with a full LDU -- interleaves
-immediately next to the value it refines, rather than being grouped apart
-from it by format.
+a +4, an outcode vs. a full postcode in it -- interleaves immediately next to
+the value it refines, rather than being grouped apart from it by format.
 
 Formats implemented so far:
 
@@ -236,6 +244,15 @@ Formats implemented so far:
   * **LU** -- `L-` + 4 digits; the `L-` is part of the canonical form here
     (unlike US/CA's own separators, which are input-only conveniences),
     since real Luxembourg data is essentially always written this way.
+  * **GB** -- the existing `postcode` type's 32-bit value, carried unchanged in
+    the payload and parsed by the same code (`postcode_parse`), so the two types
+    cannot drift apart. The outcode (`SW1A`, `LS24`) is a complete value. Also
+    assigned to GG, IM and JE, whose areas (GY, IM, JE) are already in the UK
+    layout.
+  * **IE** -- Eircode: a routing key (`A65`, or the one exception `D6W`) that is
+    a complete value on its own, optionally followed by the 4-character unique
+    identifier (`A65 F4E2`). Every character comes from 25 symbols: the digits
+    and the letters A C D E F H K N P R T V W X Y.
 
 ### Adding a country
 
@@ -260,7 +277,7 @@ One consequence worth knowing: `postal_code_in`/`postal_code(text, text)`
 are declared `STABLE`, not `IMMUTABLE`, precisely because their result can
 change if a country's assignment changes -- so, correctly, PostgreSQL will
 refuse to let you build a functional index over a `::postal_code` cast or
-the two-argument constructor (`CREATE INDEX ... (('US:' || col)::postal_code)`
+the two-argument constructor (`CREATE INDEX ... (('US-' || col)::postal_code)`
 errors: "functions in index expression must be marked IMMUTABLE"). Indexing
 the already-typed column itself (`CREATE INDEX ON t (pc)`) is unaffected --
 that only compares stored values, never re-parses text.

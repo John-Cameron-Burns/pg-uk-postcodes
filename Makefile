@@ -3,7 +3,8 @@ EXTVERSION   = 2.0.0
 
 MODULE_big   = postcode
 OBJS         = postcode.o binfmt.o postal_code.o postal_code_fmt.o postal_code_country.o \
-                postal_code_us.o postal_code_ca.o postal_code_fr.o postal_code_br.o postal_code_cz.o postal_code_lu.o
+                postal_code_us.o postal_code_ca.o postal_code_fr.o postal_code_br.o postal_code_cz.o postal_code_lu.o \
+                postal_code_gb.o postal_code_ie.o
 DATA         = postcode--1.3.0.sql postcode--1.3.1.sql postcode--1.3.2.sql postcode--1.3.3.sql postcode--1.3.4.sql postcode--1.3.5.sql postcode--2.0.0.sql \
                 postcode--1.3.0--1.3.1.sql postcode--1.3.1--1.3.2.sql postcode--1.3.2--1.3.3.sql postcode--1.3.3--1.3.4.sql postcode--1.3.4--1.3.5.sql postcode--1.3.5--2.0.0.sql
 REGRESS      = parser binary sort random quirks format match partial dps range cast support selectivity postal_code
@@ -15,6 +16,11 @@ PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
 override CFLAGS := $(filter-out -Wdeclaration-after-statement, $(CFLAGS))
+
+# PGXS doesn't track header dependencies: without this, a header-only change
+# (e.g. a new pc_format enum value changing PC_FMT_MAX) leaves stale .o files
+# that still have the old value compiled in -- which bit this build once.
+$(OBJS): postal_code.h postal_code_fmt.h postal_code_country.h postcode.h binfmt.h areas.h dps.h
 
 # "binary" (COPY ... WITH BINARY, exercising postcode's/dps's binary
 # send/recv functions -- a completely separate code path from the

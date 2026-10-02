@@ -33,6 +33,8 @@ typedef enum {
    PC_FMT_BR      = 4,  // 5-digit base + optional 3-digit suffix (CEP)
    PC_FMT_CZ      = 5,  // 5 digits, "NNN NN"
    PC_FMT_LU      = 6,  // "L-" + 4 digits
+   PC_FMT_GB      = 7,  // UK: wraps postcode.h's 32-bit layout; outcode-only is valid
+   PC_FMT_IE      = 8,  // Eircode: routing key, optionally + unique identifier
    PC_FMT_MAX
 } pc_format;
 

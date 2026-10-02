@@ -15,12 +15,22 @@
 -- immediately before its more specific children rather than being
 -- grouped apart from them by format.
 --
--- Initial formats: US (ZIP5 + optional ZIP+4) and CA (FSA, optionally
--- with LDU -- GeoNames' worldwide postal code table shows real
--- Canadian data is overwhelmingly FSA-only, so that's a first-class
--- complete value here, not a truncated fragment). More countries are
--- added by extending pc_country_formats[]/pc_formats[] in
--- postal_code_fmt.c, not by changing this SQL definition.
+-- Text form follows the UPU recommendation: the ISO 3166-1 alpha-2
+-- country, a hyphen, then the national code -- 'US-90210-1234',
+-- 'CA-K1A 0B1', 'GB-SW1A 1AA'. The country is always two characters,
+-- so the first hyphen is the delimiter even where the national code has
+-- hyphens of its own (US ZIP+4, BR CEP).
+--
+-- Where a country has a distinct outcode/incode structure (GB, IE, CA,
+-- US) the outcode alone is a complete, valid value -- GeoNames' own GB,
+-- IE and CA rows are overwhelmingly exactly that. Where the leading
+-- digits are only implicitly an outcode (FR, CZ, LU) the full code is
+-- required.
+--
+-- Formats: US, CA, FR, BR, CZ, LU, GB, IE. Which country uses which
+-- format is data (postal_code_country_formats, below), not code: add a
+-- country to an existing format with add_country_format(); only a
+-- genuinely new format shape needs C (postal_code_fmt.c).
 
 CREATE TYPE postal_code;
 
@@ -192,7 +202,9 @@ INSERT INTO postal_code_formats (name, description) VALUES
    ('FR', 'France: 5 digits'),
    ('BR', 'Brazil: 5-digit base + optional 3-digit suffix (CEP)'),
    ('CZ', 'Czech Republic: 5 digits, rendered "NNN NN"'),
-   ('LU', 'Luxembourg: "L-" + 4 digits');
+   ('LU', 'Luxembourg: "L-" + 4 digits'),
+   ('GB', 'United Kingdom: wraps the postcode type''s 32-bit layout; the outcode alone is a valid value'),
+   ('IE', 'Ireland: Eircode routing key, optionally with the 4-character unique identifier');
 
 CREATE TABLE postal_code_country_formats (
    iso2        text PRIMARY KEY CHECK (iso2 ~ '^[A-Z]{2}$'),
@@ -203,7 +215,10 @@ COMMENT ON TABLE postal_code_country_formats IS
    'Which format a given ISO 3166-1 alpha-2 country currently uses for NEW postal_code values -- see add_country_format()/remove_country_format(). Decoding an existing stored value never consults this table: the format is already in the value''s own bits (see postal_code_fmt.h), so reassigning a country here has no effect on postal_code values already written under its old format.';
 
 INSERT INTO postal_code_country_formats (iso2, format_name) VALUES
-   ('BR', 'BR'), ('CA', 'CA'), ('CZ', 'CZ'), ('FR', 'FR'), ('LU', 'LU'), ('US', 'US');
+   ('BR', 'BR'), ('CA', 'CA'), ('CZ', 'CZ'), ('FR', 'FR'), ('LU', 'LU'), ('US', 'US'),
+   -- the Crown Dependencies' areas (GY, IM, JE) are already part of the UK layout
+   ('GB', 'GB'), ('GG', 'GB'), ('IM', 'GB'), ('JE', 'GB'),
+   ('IE', 'IE');
 
 CREATE FUNCTION add_country_format(cc text, format_name text)
    RETURNS void
@@ -234,4 +249,4 @@ BEGIN
 END;
 $$;
 COMMENT ON FUNCTION remove_country_format(text) IS
-   'Undo add_country_format(): after this, parsing "CC:..."/postal_code(cc, ...) for that country raises rather than resolving to whatever format it used to have. Existing stored values for that country are unaffected -- see postal_code_country_formats'' own comment.';
+   'Undo add_country_format(): after this, parsing "CC-..."/postal_code(cc, ...) for that country raises rather than resolving to whatever format it used to have. Existing stored values for that country are unaffected -- see postal_code_country_formats'' own comment.';

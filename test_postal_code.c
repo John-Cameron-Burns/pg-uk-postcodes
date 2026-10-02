@@ -4,6 +4,7 @@
 
 #include "postal_code.h"
 #include "postal_code_fmt.h"
+#include "binfmt.h"
 
 static int failures = 0;
 
@@ -42,7 +43,7 @@ static void render (postal_code pc, char *buf, size_t buflen) {
    pc_format fmt = (pc_format) GET_FORMAT(pc);
    char iso2[2];
    pc_unpack_country((uint16_t) GET_COUNTRY(pc), iso2);
-   int n = snprintf(buf, buflen, "%c%c:", iso2[0], iso2[1]);
+   int n = snprintf(buf, buflen, "%c%c-", iso2[0], iso2[1]);
    pc_formats[fmt]->render(GET_PAYLOAD(pc), buf + n);
 }
 
@@ -54,12 +55,12 @@ int main (void) {
    postal_code us1 = make("US", "90210", &ok);
    CHECK(ok);
    render(us1, buf, sizeof buf);
-   CHECK(strcmp(buf, "US:90210") == 0);
+   CHECK(strcmp(buf, "US-90210") == 0);
 
    postal_code us2 = make("US", "90210-1234", &ok);
    CHECK(ok);
    render(us2, buf, sizeof buf);
-   CHECK(strcmp(buf, "US:90210-1234") == 0);
+   CHECK(strcmp(buf, "US-90210-1234") == 0);
 
    // 0000 is not a real +4 add-on code
    postal_code us_bad = make("US", "90210-0000", &ok);
@@ -70,13 +71,13 @@ int main (void) {
    postal_code ca1 = make("CA", "K1A 0B1", &ok);
    CHECK(ok);
    render(ca1, buf, sizeof buf);
-   CHECK(strcmp(buf, "CA:K1A 0B1") == 0);
+   CHECK(strcmp(buf, "CA-K1A 0B1") == 0);
 
    // tolerant of no space and lowercase, same as UK's parser
    postal_code ca2 = make("CA", "k1a0b1", &ok);
    CHECK(ok);
    render(ca2, buf, sizeof buf);
-   CHECK(strcmp(buf, "CA:K1A 0B1") == 0);
+   CHECK(strcmp(buf, "CA-K1A 0B1") == 0);
 
    // D is an excluded letter -- must be rejected
    postal_code ca_bad = make("CA", "D1A 0B1", &ok);
@@ -91,7 +92,7 @@ int main (void) {
    postal_code ca_w_mid = make("CA", "K1W 0B1", &ok);
    CHECK(ok);
    render(ca_w_mid, buf, sizeof buf);
-   CHECK(strcmp(buf, "CA:K1W 0B1") == 0);
+   CHECK(strcmp(buf, "CA-K1W 0B1") == 0);
 
    // unknown format name (country->format assignment itself is a SQL
    // concern now -- see sql/postal_code.sql for that coverage)
@@ -106,12 +107,12 @@ int main (void) {
    postal_code us_zero = make("US", "00000", &ok);
    CHECK(ok);
    render(us_zero, buf, sizeof buf);
-   CHECK(strcmp(buf, "US:00000") == 0);
+   CHECK(strcmp(buf, "US-00000") == 0);
 
    postal_code ca_zero = make("CA", "A0A 0A0", &ok);
    CHECK(ok);
    render(ca_zero, buf, sizeof buf);
-   CHECK(strcmp(buf, "CA:A0A 0A0") == 0);
+   CHECK(strcmp(buf, "CA-A0A 0A0") == 0);
 
    // --- CA FSA-only (no LDU) -- discovered to be the overwhelmingly
    // common real-world shape via GeoNames' worldwide postal code
@@ -121,7 +122,7 @@ int main (void) {
    postal_code ca_fsa = make("CA", "T0A", &ok);
    CHECK(ok);
    render(ca_fsa, buf, sizeof buf);
-   CHECK(strcmp(buf, "CA:T0A") == 0);
+   CHECK(strcmp(buf, "CA-T0A") == 0);
 
    // 4 or 5 characters is neither a valid FSA-only nor a complete
    // FSA+LDU value -- must be rejected, not silently truncated/padded
@@ -151,7 +152,7 @@ int main (void) {
    postal_code fr1 = make("FR", "75001", &ok);
    CHECK(ok);
    render(fr1, buf, sizeof buf);
-   CHECK(strcmp(buf, "FR:75001") == 0);
+   CHECK(strcmp(buf, "FR-75001") == 0);
 
    // GeoNames' own FR data is ~28% contaminated with trailing
    // "CEDEX NN"/brand-name suffixes leaked from address-routing
@@ -167,7 +168,7 @@ int main (void) {
    postal_code cz1 = make("CZ", "110 00", &ok);
    CHECK(ok);
    render(cz1, buf, sizeof buf);
-   CHECK(strcmp(buf, "CZ:110 00") == 0);
+   CHECK(strcmp(buf, "CZ-110 00") == 0);
 
    postal_code cz2 = make("CZ", "11000", &ok);
    CHECK(ok);
@@ -177,7 +178,7 @@ int main (void) {
    postal_code lu1 = make("LU", "L-1311", &ok);
    CHECK(ok);
    render(lu1, buf, sizeof buf);
-   CHECK(strcmp(buf, "LU:L-1311") == 0);
+   CHECK(strcmp(buf, "LU-L-1311") == 0);
 
    postal_code lu2 = make("LU", "1311", &ok);
    CHECK(ok);
@@ -188,17 +189,17 @@ int main (void) {
    postal_code br1 = make("BR", "01310-100", &ok);
    CHECK(ok);
    render(br1, buf, sizeof buf);
-   CHECK(strcmp(buf, "BR:01310-100") == 0);
+   CHECK(strcmp(buf, "BR-01310-100") == 0);
 
    postal_code br_base = make("BR", "08970", &ok);
    CHECK(ok);
    render(br_base, buf, sizeof buf);
-   CHECK(strcmp(buf, "BR:08970") == 0);
+   CHECK(strcmp(buf, "BR-08970") == 0);
 
    postal_code br_common_000 = make("BR", "08970-000", &ok);
    CHECK(ok);
    render(br_common_000, buf, sizeof buf);
-   CHECK(strcmp(buf, "BR:08970-000") == 0);
+   CHECK(strcmp(buf, "BR-08970-000") == 0);
    CHECK(br_common_000 != br_base); // "-000" present is distinct from absent
 
    // base-only sorts immediately before every fully-specified value
@@ -221,6 +222,100 @@ int main (void) {
    postal_code br_08970_999 = make("BR", "08970-999", &ok);
    CHECK(ok);
    CHECK(br_08970_999 < br_08971); // "08970-999" sorts before "08971": same text order
+
+   // --- outcode-only is a complete, valid value (UK, IE, CA, US) ---
+   // GeoNames: all 27,450 GB rows and all 139 IE rows are outcode-only.
+   postal_code gb_full = make("GB", "SW1A 1AA", &ok);
+   CHECK(ok);
+   render(gb_full, buf, sizeof buf);
+   CHECK(strcmp(buf, "GB-SW1A 1AA") == 0);
+
+   // the payload is exactly the existing postcode type's value
+   CHECK(GET_PAYLOAD(gb_full) == (uint64_t) postcode_parse("SW1A 1AA", false));
+
+   postal_code gb_out = make("GB", "SW1A", &ok);
+   CHECK(ok);
+   render(gb_out, buf, sizeof buf);
+   CHECK(strcmp(buf, "GB-SW1A") == 0);
+
+   postal_code gb_out1 = make("GB", "ls24", &ok); // lower case, one-digit-plus-digit district
+   CHECK(ok);
+   render(gb_out1, buf, sizeof buf);
+   CHECK(strcmp(buf, "GB-LS24") == 0);
+
+   postal_code gb_short = make("GB", "M1", &ok);   // 1-letter area, 1-digit district
+   CHECK(ok);
+   render(gb_short, buf, sizeof buf);
+   CHECK(strcmp(buf, "GB-M1") == 0);
+
+   // an outcode sorts immediately before every full code in it, and
+   // outcodes still sort against each other
+   CHECK(gb_out < gb_full);
+   postal_code gb_full2 = make("GB", "SW1A 2AA", &ok);
+   CHECK(ok && gb_full < gb_full2);
+   postal_code gb_next = make("GB", "SW1B", &ok);
+   CHECK(ok && gb_full2 < gb_next);
+
+   // in-between (sector, no unit) and area-only are fragments, not postcodes
+   postal_code gb_sec = make("GB", "SW1A 1", &ok);
+   CHECK(!ok);
+   (void) gb_sec;
+   postal_code gb_area = make("GB", "SW", &ok);
+   CHECK(!ok);
+   (void) gb_area;
+   postal_code gb_bad = make("GB", "ZZ1 1AA", &ok);
+   CHECK(!ok);
+   (void) gb_bad;
+
+   // --- IE (Eircode) ---
+   postal_code ie_full = make("IE", "A65 F4E2", &ok);
+   CHECK(ok);
+   render(ie_full, buf, sizeof buf);
+   CHECK(strcmp(buf, "IE-A65 F4E2") == 0);
+
+   postal_code ie_nospace = make("IE", "a65f4e2", &ok);
+   CHECK(ok && ie_nospace == ie_full);
+
+   postal_code ie_rk = make("IE", "A65", &ok);
+   CHECK(ok);
+   render(ie_rk, buf, sizeof buf);
+   CHECK(strcmp(buf, "IE-A65") == 0);
+   CHECK(ie_rk < ie_full);
+
+   postal_code ie_d6w = make("IE", "D6W", &ok); // the one routing key that isn't letter-digit-digit
+   CHECK(ok);
+   render(ie_d6w, buf, sizeof buf);
+   CHECK(strcmp(buf, "IE-D6W") == 0);
+
+   postal_code ie_next = make("IE", "A66", &ok);
+   CHECK(ok && ie_full < ie_next); // routing key dominates the identifier
+
+   postal_code ie_b = make("IE", "B65", &ok);        // B is not an Eircode letter
+   CHECK(!ok);
+   (void) ie_b;
+   postal_code ie_d6x = make("IE", "D6X", &ok);      // only D6W is exempt
+   CHECK(!ok);
+   (void) ie_d6x;
+   postal_code ie_6 = make("IE", "A65 F4E", &ok);    // identifier is exactly 4 characters
+   CHECK(!ok);
+   (void) ie_6;
+   postal_code ie_o = make("IE", "A65 F4O2", &ok);   // O is not an Eircode letter
+   CHECK(!ok);
+   (void) ie_o;
+   postal_code ie_sp = make("IE", "A 65", &ok);      // no space inside the routing key
+   CHECK(!ok);
+   (void) ie_sp;
+
+   // --- full code required where the outcode is only implicit (FR, CZ, LU) ---
+   postal_code fr_prefix = make("FR", "750", &ok);
+   CHECK(!ok);
+   (void) fr_prefix;
+   postal_code cz_prefix = make("CZ", "110", &ok);
+   CHECK(!ok);
+   (void) cz_prefix;
+   postal_code lu_prefix = make("LU", "L-13", &ok);
+   CHECK(!ok);
+   (void) lu_prefix;
 
    if (failures == 0) printf("all tests passed\n");
    else printf("%d failure(s)\n", failures);

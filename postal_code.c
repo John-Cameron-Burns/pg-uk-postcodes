@@ -103,21 +103,25 @@ PG_FUNCTION_INFO_V1(postal_code_in);
 Datum postal_code_in (PG_FUNCTION_ARGS) {
    char *str = PG_GETARG_CSTRING(0);
 
-   char *colon = strchr(str, ':');
-   if (!colon)
+   // UPU form: ISO 3166-1 alpha-2, a hyphen, then the national code
+   // ("US-90210-1234"). The country is always exactly two characters,
+   // so the FIRST hyphen is unambiguously the delimiter even for
+   // national codes that contain hyphens of their own (US ZIP+4, BR CEP).
+   char *hyphen = strchr(str, '-');
+   if (!hyphen || hyphen - str != 2)
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      errmsg (_("postal_code requires a country prefix, e.g. \"US:90210\"")),
-                      errhint(_("no ':' found in \"%s\""), str)));
+                      errmsg (_("postal_code requires a two-letter country prefix, e.g. \"US-90210\"")),
+                      errhint(_("got \"%s\""), str)));
 
    char iso2[2];
-   pc_format fmt = lookup_country(str, (size_t) (colon - str), iso2);
+   pc_format fmt = lookup_country(str, 2, iso2);
 
    uint64_t payload;
-   if (! pc_formats[fmt]->parse(colon + 1, false, &payload) ||
+   if (! pc_formats[fmt]->parse(hyphen + 1, false, &payload) ||
        ! pc_formats[fmt]->valid(payload))
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       errmsg (_("cannot parse \"%s\" as a %s postal code"),
-                              colon + 1, pc_formats[fmt]->name)));
+                              hyphen + 1, pc_formats[fmt]->name)));
 
    PG_RETURN_POSTAL_CODE(pc_assemble(iso2, fmt, payload));
 }
@@ -136,8 +140,8 @@ Datum postal_code_out (PG_FUNCTION_ARGS) {
    char iso2[2];
    pc_unpack_country((uint16_t) GET_COUNTRY(pc), iso2);
 
-   char *out = palloc(3 + pc_formats[fmt]->max_text_len + 1); // "CC:" + code + NUL
-   int n = sprintf(out, "%c%c:", iso2[0], iso2[1]);
+   char *out = palloc(3 + pc_formats[fmt]->max_text_len + 1); // "CC-" + code + NUL
+   int n = sprintf(out, "%c%c-", iso2[0], iso2[1]);
    pc_formats[fmt]->render(GET_PAYLOAD(pc), out + n);
 
    PG_RETURN_CSTRING(out);
@@ -216,7 +220,7 @@ Datum postal_code_gte (PG_FUNCTION_ARGS) {
 // Two-argument constructor, analogous to PostGIS's
 // ST_GeomFromText(wkt, srid): for callers that already have country
 // and national code as separate values and don't want to build
-// (and this function then reparse) a "CC:code" string themselves.
+// (and this function then reparse) a "CC-code" string themselves.
 // Unlike ST_SetSRID(), there is no cheap "retag an existing value"
 // counterpart -- see the country/format design notes above
 // pc_format for why that would silently corrupt the payload for
