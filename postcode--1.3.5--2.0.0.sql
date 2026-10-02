@@ -225,6 +225,32 @@ CREATE FUNCTION is_valid(text, text)
    LANGUAGE sql STABLE STRICT
    AS 'SELECT to_postal_code($1, $2) IS NOT NULL';
 
+-- Partial match. A fragment is "CC-" plus a PREFIX of the national code --
+-- 'GB-LS24', 'FR-75', 'CA-K1A 0' -- and matches every value that starts with
+-- it. Each format orders its values exactly as its text sorts, so a prefix
+-- is one contiguous range and neighbouring prefixes tile with no gap or
+-- overlap. A fragment is not a value: 'FR-75' is a fragment but not a
+-- postcode.
+--
+-- lower_bound(): the smallest valid value in the range (inclusive).
+-- upper_bound(): the smallest valid value past it (exclusive) -- a real
+--   postcode wherever a successor exists ('CA-K1A' -> 'CA-K1B', skipping
+--   letters Canada never uses). Where there is none -- the fragment reaches
+--   the top of the country ('US-99', the last UK area) -- it is that
+--   country's end-of-country bound, 'US-~': a value that sorts after every
+--   real value of the country and before the first of the next. It is a
+--   bound, never a postcode (is_valid('US-~') is false), and it is what makes
+--   `pc < upper_bound(...)` right at the top of a country too.
+CREATE FUNCTION lower_bound(text)
+   RETURNS postal_code
+   AS 'MODULE_PATHNAME', 'postal_code_lower_bound'
+   LANGUAGE C STABLE STRICT;
+
+CREATE FUNCTION upper_bound(text)
+   RETURNS postal_code
+   AS 'MODULE_PATHNAME', 'postal_code_upper_bound'
+   LANGUAGE C STABLE STRICT;
+
 CREATE FUNCTION country(postal_code)
    RETURNS text
    AS 'MODULE_PATHNAME', 'postal_code_country'
@@ -303,3 +329,49 @@ END;
 $$;
 COMMENT ON FUNCTION remove_country_format(text) IS
    'Undo add_country_format(): after this, parsing "CC-..."/postal_code(cc, ...) for that country raises rather than resolving to whatever format it used to have. Existing stored values for that country are unaffected -- see postal_code_country_formats'' own comment.';
+
+
+-- A range of postal codes: a native PostgreSQL range type, so it comes with
+-- <@ / @> / && / -|- (adjacent) and multiranges for free. [lo, hi) is built
+-- from a fragment by postal_prefix('GB-LS24').
+--
+--   WHERE pc <@ postal_prefix('GB-LS24')
+--
+-- The bounds are postal_code VALUES but are bounds, not addresses: a bound
+-- that is the successor of a prefix need not be a code anyone has, and at the
+-- top of a country it is the end-of-country bound 'US-~'. Using a bound as a
+-- postcode is bad practice. A prefix range is never open-ended: PostgreSQL's
+-- "no upper end" means the end of the WHOLE value space, and countries lie end
+-- to end in it, so [BR-99000,) would run on through every later country.
+CREATE TYPE postal_code_range AS RANGE (subtype = postal_code);
+
+-- Named postal_prefix, NOT postal_code_range: PostgreSQL reads
+-- typename('literal') as a cast to that type, so a one-argument function
+-- sharing its return type's name is never reached with a string literal.
+--
+-- STABLE, like postal_code_in, because the answer depends on which format a
+-- country is assigned. The support function folds a call with a CONSTANT
+-- fragment into a constant range at plan time, so that PostgreSQL's own
+-- rewrite of `col <@ <constant range>` into btree conditions applies and a
+-- prefix search uses the index. To keep that safe the folded plan is made to
+-- depend on postal_code_country_formats, and the trigger below invalidates
+-- such plans whenever that table changes.
+CREATE FUNCTION postal_prefix_support(internal)
+   RETURNS internal
+   AS 'MODULE_PATHNAME', 'postal_code_prefix_support'
+   LANGUAGE C;
+
+CREATE FUNCTION postal_prefix(text)
+   RETURNS postal_code_range
+   AS 'MODULE_PATHNAME', 'postal_code_prefix'
+   LANGUAGE C STABLE STRICT
+   SUPPORT postal_prefix_support;
+
+CREATE FUNCTION postal_code_formats_changed()
+   RETURNS trigger
+   AS 'MODULE_PATHNAME'
+   LANGUAGE C;
+
+CREATE TRIGGER postal_code_country_formats_changed
+   AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON postal_code_country_formats
+   FOR EACH STATEMENT EXECUTE FUNCTION postal_code_formats_changed();

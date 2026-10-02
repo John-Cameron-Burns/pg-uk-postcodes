@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "postal_code_fmt.h"
+#include "postal_code_range.h"
 
 // Brazilian CEP: 5-digit base + optional 3-digit suffix, written
 // "NNNNN-NNN" when the suffix is present (e.g. "01310-100"). Unlike
@@ -120,10 +121,50 @@ static bool br_valid (uint64_t payload) {
    return BR_GET_SUFFIX(payload) <= 999;
 }
 
+// Fragment: 1-5 base digits, or a full base then 1-3 suffix digits. Same
+// shape as the US: a base fragment covers the bare base AND all its suffixes
+// (the bare value sorts first); a suffix fragment starts at its smallest
+// suffix ("000" is real here) and ends at the next base when it is the last.
+static bool br_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+   if (!str) return false;
+   int k = 0;
+   uint32_t z = 0;
+   while (k < 5 && is_digit(str[k])) z = z * 10 + (uint32_t) (str[k++] - '0');
+   if (k == 0) return false;
+
+   *unbounded = false;
+   if (str[k] == '\0') {
+      uint32_t zl, zh;
+      pc_digit_prefix_bounds(z, k, 5, &zl, &zh);
+      *lo = (uint64_t) zl << BR_BASE_POS;
+      if (zh > 99999) *unbounded = true;
+      else            *hi = (uint64_t) zh << BR_BASE_POS;
+      return true;
+   }
+
+   if (k != 5 || str[k] != '-') return false;
+   const char *p = str + k + 1;
+   int m = 0;
+   uint32_t a = 0;
+   while (m < 3 && is_digit(p[m])) a = a * 10 + (uint32_t) (p[m++] - '0');
+   if (m == 0 || p[m] != '\0') return false;
+
+   uint32_t al, ah;
+   pc_digit_prefix_bounds(a, m, 3, &al, &ah);
+   uint64_t base = (uint64_t) z << BR_BASE_POS;
+   uint64_t with = base | ((uint64_t) 1 << BR_HAS_SUFFIX_POS);
+   *lo = with | al;
+   if (ah <= 999)       *hi = with | ah;
+   else if (z < 99999)  *hi = (uint64_t) (z + 1) << BR_BASE_POS;
+   else                 *unbounded = true;
+   return true;
+}
+
 const pc_encoder pc_br_encoder = {
    .name         = "BR",
    .max_text_len = BR_MAX_TEXT_LEN,
    .parse        = br_parse,
    .render       = br_render,
    .valid        = br_valid,
+   .range        = br_range,
 };

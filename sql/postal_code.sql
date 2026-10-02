@@ -257,6 +257,130 @@ SELECT pc FROM de_before_removal; -- still renders fine, unaffected by the remov
 SELECT 'DE-12345'::postal_code;   -- but parsing fresh text for DE fails now
 
 
+-- ===== Partial match: fragments, bounds and ranges ============================
+-- A fragment is "CC-" plus a PREFIX of the national code. Each format orders
+-- its values exactly as its text sorts, so a prefix is one contiguous range
+-- [lower_bound, upper_bound), and neighbouring prefixes tile. A fragment is
+-- not a value: 'FR-75' is a fragment but not a postcode.
+
+SELECT lower_bound('FR-75') AS lo, upper_bound('FR-75') AS hi;       -- 2 of 5 digits
+SELECT lower_bound('FR-750') AS lo, upper_bound('FR-750') AS hi;     -- 3 of 5
+SELECT lower_bound('US-90210') AS lo, upper_bound('US-90210') AS hi; -- a bare ZIP5 covers its +4s too
+SELECT lower_bound('US-90210-1') AS lo, upper_bound('US-90210-1') AS hi;
+SELECT lower_bound('US-90210-9999') AS lo, upper_bound('US-90210-9999') AS hi; -- last add-on ends at the next ZIP5
+SELECT lower_bound('BR-08970-0') AS lo, upper_bound('BR-08970-0') AS hi;
+SELECT lower_bound('CA-K') AS lo, upper_bound('CA-K') AS hi;         -- the smallest VALID value: an outcode
+SELECT lower_bound('CA-V') AS lo, upper_bound('CA-V') AS hi;         -- W is never a first letter
+SELECT lower_bound('CA-K1C') AS lo, upper_bound('CA-K1C') AS hi;     -- D is never used
+SELECT lower_bound('CA-K1A 9') AS lo, upper_bound('CA-K1A 9') AS hi; -- carries out of the LDU to the next FSA
+SELECT lower_bound('IE-A99') AS lo, upper_bound('IE-A99') AS hi;     -- there is no B
+SELECT lower_bound('IE-D69') AS lo, upper_bound('IE-D69') AS hi;     -- ... and D6W sits between D69 and D70
+SELECT lower_bound('IE-D6W') AS lo, upper_bound('IE-D6W') AS hi;
+SELECT lower_bound('GB-LS1') AS lo, upper_bound('GB-LS1') AS hi;     -- district LS1 only, not LS1x
+SELECT lower_bound('GB-LS19') AS lo, upper_bound('GB-LS19') AS hi;
+SELECT lower_bound('GB-SW1A 1') AS lo, upper_bound('GB-SW1A 1') AS hi;
+SELECT lower_bound('GB-ZE') AS lo, upper_bound('GB-ZE') AS hi;       -- area list is append-only: GX follows ZE
+
+-- the top of a country has no successor value, so the upper bound is that
+-- country's end-of-country bound 'XX-~': after every real value of the country
+-- and before the next. It is a bound, never a postcode.
+SELECT lower_bound('US-99') AS lo, upper_bound('US-99') AS hi;
+SELECT lower_bound('CA-Y') AS lo, upper_bound('CA-Y') AS hi;
+SELECT lower_bound('GB-GX') AS lo, upper_bound('GB-GX') AS hi;
+SELECT lower_bound('IE-Y') AS lo, upper_bound('IE-Y') AS hi;
+SELECT 'US-99999'::postal_code < 'US-~'::postal_code AS after_the_last_us_code,
+       'US-~'::postal_code < 'ZA-~'::postal_code AS before_the_next_country,
+       'US-~'::postal_code > 'US-99999-9999'::postal_code AS after_the_last_us_plus4,
+       country('US-~'::postal_code) AS still_knows_its_country;
+-- ... but it is not a postcode: nothing validates, parses or constructs it
+SELECT is_valid('US-~') AS is_valid, to_postal_code('US-~') IS NULL AS to_postal_code_is_null;
+SELECT postal_code('US', '~');
+SELECT 'US-'::postal_code;
+SELECT 'U1-~'::postal_code;
+
+-- postal_prefix(): the range itself, a native PostgreSQL range type
+SELECT postal_prefix('GB-LS24');
+SELECT postal_prefix('US-99');          -- ends at the end-of-country bound
+SELECT postal_prefix('CA-K1C');
+SELECT postal_prefix('IE-D6');
+SELECT postal_prefix('FR-75') @> 'FR-75054'::postal_code AS contains,
+       postal_prefix('FR-75') @> 'FR-76000'::postal_code AS next_prefix_excluded,
+       'US-99999'::postal_code <@ postal_prefix('US-99') AS top_of_country_included;
+-- the top of one country must not run on into the next ones: BR sorts before CA
+SELECT 'CA-K1A'::postal_code <@ postal_prefix('BR-99') AS later_country_excluded,
+       'BR-99999-999'::postal_code <@ postal_prefix('BR-99') AS own_top_included;
+
+-- neighbouring prefixes are adjacent: no gap and no overlap
+SELECT postal_prefix('CA-K1C') -|- postal_prefix('CA-K1E') AS skips_the_unused_D,
+       postal_prefix('GB-LS19') -|- postal_prefix('GB-LS1A') AS digits_then_letters,
+       postal_prefix('IE-D69') -|- postal_prefix('IE-D6W') AS d69_d6w,
+       postal_prefix('IE-D6W') -|- postal_prefix('IE-D70') AS d6w_d70,
+       postal_prefix('US-90210') -|- postal_prefix('US-90211') AS zips,
+       postal_prefix('BR-08970') -|- postal_prefix('BR-08971') AS ceps;
+
+-- things that are not fragments
+SELECT postal_prefix('FR-75A');
+SELECT postal_prefix('FR-75001 CEDEX');
+SELECT postal_prefix('CA-D');
+SELECT postal_prefix('IE-B');
+SELECT postal_prefix('US-90210-0000');
+SELECT postal_prefix('75');
+SELECT postal_prefix('ZZ-1');
+
+-- on the real-data fixture: a range matches exactly the values whose text
+-- starts with the fragment (fragments chosen where GB's hierarchical rule
+-- and plain text prefix agree)
+SELECT f.frag, count(*) FILTER (WHERE a.pc <@ postal_prefix(f.frag)) AS matches,
+       count(*) FILTER (WHERE (a.pc <@ postal_prefix(f.frag)) IS DISTINCT FROM (a.pc::text LIKE f.frag || '%')) AS disagreements
+FROM addr a, (VALUES ('US-9'),('US-99'),('CA-T'),('CA-T0'),('CA-V'),('GB-PH'),('IE-D'),('FR-7'),
+                     ('BR-0'),('BR-08970'),('CZ-5'),('LU-L-4')) f(frag)
+GROUP BY f.frag ORDER BY f.frag;
+
+-- a prefix search uses the index. A call with a constant fragment is folded
+-- into a constant range at plan time so PostgreSQL's own rewrite of
+-- "col <@ constant range" into btree conditions applies, the top of a country
+-- included. (Helper reports whether the plan has an index
+-- condition, which is stable output where the plan text itself is not.)
+CREATE FUNCTION pg_temp.uses_index_cond(q text) RETURNS boolean LANGUAGE plpgsql AS $$
+DECLARE line text;
+BEGIN
+   FOR line IN EXECUTE 'EXPLAIN (COSTS OFF) ' || q LOOP
+      IF line LIKE '%Index Cond:%' THEN RETURN true; END IF;
+   END LOOP;
+   RETURN false;
+END $$;
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+SELECT pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc <@ postal_prefix('GB-PH') $q$) AS bounded,
+       pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc <@ postal_prefix('US-99') $q$) AS unbounded_top,
+       pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc <@ postal_prefix('CA-K1C') $q$) AS skipping_unused_letter;
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+
+-- a fragment that is not a constant still works (computed per row; no folding)
+SELECT count(*) AS joined FROM (VALUES ('US-9'), ('CA-T')) f(frag) JOIN addr a ON a.pc <@ postal_prefix(f.frag);
+
+-- THE SAFETY NET. Folding postal_prefix() into a plan would let a cached
+-- plan keep a range computed under a country assignment that has since
+-- changed, so the folded plan depends on postal_code_country_formats and a
+-- trigger invalidates it whenever that table changes. Austria is assigned the
+-- plain-5-digit format, a row is stored, a statement is prepared (its plan is
+-- cached); then Austria is reassigned to the Czech format, which renders with
+-- a space. The same prepared statement must now mean the CZ range -- and so
+-- return the CZ-format row, not the old FR-format one.
+SELECT add_country_format('AT', 'FR');
+INSERT INTO addr (pc) VALUES ('AT-12345');
+PREPARE at_prefix AS SELECT pc FROM addr WHERE pc <@ postal_prefix('AT-12');
+EXECUTE at_prefix;
+EXECUTE at_prefix;
+SELECT add_country_format('AT', 'CZ');
+INSERT INTO addr (pc) VALUES ('AT-12345');
+EXECUTE at_prefix;
+DEALLOCATE at_prefix;
+SELECT remove_country_format('AT');
+DELETE FROM addr WHERE pc::text LIKE 'AT-%';
+
+
 -- Binary send/recv (postal_code_recv/postal_code_send, the
 -- COPY ... WITH (FORMAT binary) path) is deliberately not covered
 -- here: doing that portably needs a checked-in binary fixture file

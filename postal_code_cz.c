@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "postal_code_fmt.h"
+#include "postal_code_range.h"
 
 // Czech postal code (PSC): 5 digits, conventionally rendered with a
 // space after the third digit (e.g. "110 00"), tolerant of the space
@@ -63,10 +64,34 @@ static bool cz_valid (uint64_t payload) {
    return CZ_GET_VALUE(payload) <= 99999;
 }
 
+// Fragment: 1-5 leading digits, with the usual optional space after the third.
+static bool cz_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+   if (!str) return false;
+   const char *s = str;
+   int k = 0;
+   uint32_t p = 0;
+   while (k < 5) {
+      if (k == 3 && *s == ' ') s++;
+      if (!is_digit(*s)) break;
+      p = p * 10 + (uint32_t) (*s++ - '0');
+      k++;
+   }
+   while (*s == ' ') s++;
+   if (k == 0 || *s != '\0') return false;
+
+   uint32_t l, h;
+   pc_digit_prefix_bounds(p, k, 5, &l, &h);
+   *lo = l;
+   *unbounded = h > 99999;
+   if (!*unbounded) *hi = h;
+   return true;
+}
+
 const pc_encoder pc_cz_encoder = {
    .name         = "CZ",
    .max_text_len = CZ_MAX_TEXT_LEN,
    .parse        = cz_parse,
    .render       = cz_render,
    .valid        = cz_valid,
+   .range        = cz_range,
 };

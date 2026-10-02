@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "postal_code_fmt.h"
+#include "postal_code_range.h"
 
 // Luxembourg postal code: "L-" followed by 4 digits, e.g. "L-1311".
 // Unlike US/CA's own separators (which this repo's parser is merely
@@ -67,10 +68,29 @@ static bool lu_valid (uint64_t payload) {
    return LU_GET_VALUE(payload) <= 9999;
 }
 
+// Fragment: 1-4 leading digits, with or without the "L-".
+static bool lu_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+   if (!str) return false;
+   const char *s = str;
+   if ((s[0] == 'L' || s[0] == 'l') && s[1] == '-') s += 2;
+   int k = 0;
+   uint32_t p = 0;
+   while (k < 4 && is_digit(s[k])) p = p * 10 + (uint32_t) (s[k++] - '0');
+   if (k == 0 || s[k] != '\0') return false;
+
+   uint32_t l, h;
+   pc_digit_prefix_bounds(p, k, 4, &l, &h);
+   *lo = l;
+   *unbounded = h > 9999;
+   if (!*unbounded) *hi = h;
+   return true;
+}
+
 const pc_encoder pc_lu_encoder = {
    .name         = "LU",
    .max_text_len = LU_MAX_TEXT_LEN,
    .parse        = lu_parse,
    .render       = lu_render,
    .valid        = lu_valid,
+   .range        = lu_range,
 };

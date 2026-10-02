@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "postal_code_fmt.h"
+#include "postal_code_range.h"
 
 // US ZIP5 + optional ZIP+4, packed into the low 31 of the 48
 // payload bits.
@@ -93,10 +94,50 @@ static bool us_valid (uint64_t payload) {
    return US_GET_ZIP5(payload) <= 99999 && US_GET_PLUS4(payload) <= 9999;
 }
 
+// Fragment: 1-5 ZIP digits, or a full ZIP5 then 1-4 add-on digits. A ZIP5
+// fragment covers the bare ZIP5 AND every +4 under it (they interleave: the
+// bare value sorts first), so 90210 is [90210, 90211). An add-on fragment
+// starts at 0001, since 0000 is not a real add-on; when the add-on prefix
+// is the last of its ZIP5 the range ends at the next ZIP5.
+static bool us_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+   if (!str) return false;
+   int k = 0;
+   uint32_t z = 0;
+   while (k < 5 && is_digit(str[k])) z = z * 10 + (uint32_t) (str[k++] - '0');
+   if (k == 0) return false;
+
+   *unbounded = false;
+   if (str[k] == '\0') {
+      uint32_t zl, zh;
+      pc_digit_prefix_bounds(z, k, 5, &zl, &zh);
+      *lo = (uint64_t) zl << US_ZIP5_POS;
+      if (zh > 99999) *unbounded = true;
+      else            *hi = (uint64_t) zh << US_ZIP5_POS;
+      return true;
+   }
+
+   if (k != 5 || (str[k] != '-' && str[k] != ' ')) return false;
+   const char *p = str + k + 1;
+   int m = 0;
+   uint32_t a = 0;
+   while (m < 4 && is_digit(p[m])) a = a * 10 + (uint32_t) (p[m++] - '0');
+   if (m == 0 || p[m] != '\0' || (m == 4 && a == 0)) return false;
+
+   uint32_t al, ah;
+   pc_digit_prefix_bounds(a, m, 4, &al, &ah);
+   if (al == 0) al = 1;
+   *lo = ((uint64_t) z << US_ZIP5_POS) | al;
+   if (ah <= 9999)      *hi = ((uint64_t) z << US_ZIP5_POS) | ah;
+   else if (z < 99999)  *hi = (uint64_t) (z + 1) << US_ZIP5_POS;
+   else                 *unbounded = true;
+   return true;
+}
+
 const pc_encoder pc_us_encoder = {
    .name         = "US",
    .max_text_len = US_MAX_TEXT_LEN,
    .parse        = us_parse,
    .render       = us_render,
    .valid        = us_valid,
+   .range        = us_range,
 };

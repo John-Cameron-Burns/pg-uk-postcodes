@@ -285,6 +285,57 @@ It is exactly `to_postal_code(...) IS NOT NULL`, so every per-country rule
 (Canadian excluded letters, Eircode's alphabet, ZIP+4 `0000`, ...) is enforced
 by the same parser at ingest and in `is_valid()` -- they cannot disagree.
 
+### Partial match and ranges
+
+A *fragment* is `CC-` plus a **prefix** of the national code -- `GB-LS24`, `FR-75`,
+`CA-K1A 0` -- and matches every value that starts with it. Each format orders its
+values exactly as its text sorts, so a prefix is one contiguous range, and
+neighbouring prefixes tile with no gap and no overlap. A fragment is not a value:
+`FR-75` is a fragment but not a postcode.
+
+    SELECT * FROM addresses WHERE pc <@ postal_prefix('GB-LS24');   -- the range type
+    SELECT lower_bound('CA-K1C'), upper_bound('CA-K1C');             -- CA-K1C, CA-K1E
+
+* `postal_prefix(fragment)` returns a `postal_code_range`, a native PostgreSQL
+  range type, so `<@`, `@>`, `&&`, `-|-` (adjacent) and multiranges all work.
+* `lower_bound()` is the smallest *valid* value in the range (inclusive), e.g.
+  `lower_bound('CA-K')` is the outcode `CA-K0A`. `upper_bound()` is the smallest
+  valid value *past* it (exclusive), skipping symbols a format never uses
+  (Canada's `D F I O Q U`, Eircode's missing letters) and carrying into the next
+  sibling at the level above: a real postcode wherever a successor exists.
+* **The top of a country has no successor value**, e.g. `US-99`, `FR-9`, the last UK
+  area. There the upper bound is that country's **end-of-country bound**,
+  written `US-~`: a value that sorts after every real value of the country and
+  before the first of the next (`~` is the highest printable character, so it sorts
+  last as text too). So `postal_prefix('US-99')` is `[US-99000,US-~)`, and
+  `pc < upper_bound(...)` is right at the top of a country as well. A range is never
+  left open-ended, because PostgreSQL's "no upper end" means the end of the *whole*
+  value space and countries lie end to end in it: `[BR-99000,)` would run on through
+  CA, CZ, ... US. (Found by comparing every prefix in 148k real rows against a plain
+  text `GROUP BY`; a design that used an open end looked right only while the country
+  in question was the last one assigned.)
+* Bounds are bounds, not addresses. A bound that is the successor of a prefix need
+  not be a code anyone has, and using one as a postcode is bad practice. `US-~` is
+  accepted as input so a stored range survives a dump and restore, but nothing treats
+  it as a postcode: `is_valid('US-~')` is false and `to_postal_code('US-~')` is NULL.
+  (`'US-'` with nothing after the hyphen is still an error, so an empty code in a
+  concatenation cannot quietly become one.)
+* The UK rule is kept: `GB-LS1` is district LS1 only, not LS1x (all available
+  digits go to the district unless a space says otherwise). GB's area list is
+  append-only, so "the next area" is the next in *encoding* order (`ZE` is followed
+  by `GX`) -- the order the values themselves compare in, so tiling still holds.
+
+**Index use.** `pc <@ postal_prefix('GB-LS24')` uses a btree index on `pc`. A call
+with a constant fragment is folded into a constant range at plan time, and
+PostgreSQL's own rewrite of `col <@ <constant range>` into plain btree conditions
+then applies (`pc >= lo AND pc < hi`).
+That rewrite is PostgreSQL 15 and later; on 14 the query is still correct but is a
+filter. `postal_prefix()` is `STABLE` rather than `IMMUTABLE` because the answer
+depends on which format a country is assigned, so the folded plan is made to depend
+on `postal_code_country_formats` and a trigger invalidates cached plans whenever
+that table changes -- a reassigned country cannot leave a stale plan behind (this
+is tested with a prepared statement).
+
 ### Adding a country
 
 Which format a country uses is a live SQL table
@@ -319,9 +370,8 @@ design, `postal_code_country.c` for the country->format lookup, and
 (including a small, checked-in slice of real GEONAMES.world data).
 
 Binary send/recv, a btree opclass, and full comparison operators are
-provided the same as for `postcode`; partial-match (`%`) / indexed-range
-(`range_lower()`/`range_upper()`) support has not been ported to
-`postal_code` yet.
+provided the same as for `postcode`. Partial matching is the range support
+described above; the UK type's `%` operator has not been ported.
 
 
 Credits

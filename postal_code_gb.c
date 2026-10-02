@@ -4,6 +4,7 @@
 #include "postcode.h"
 #include "binfmt.h"
 #include "postal_code_fmt.h"
+#include "postal_code_range.h"
 
 // United Kingdom (also the Crown Dependencies GG/IM/JE, whose areas --
 // GY, IM, JE -- are already in areas.h): the payload IS the existing
@@ -88,10 +89,113 @@ static bool gb_valid (uint64_t payload) {
    return gb_fields_ok(gb_get(payload));
 }
 
+// ---- fragment ranges -------------------------------------------------
+// A fragment is an area ("SW"), an outcode ("SW1A", "LS24"), an outcode and
+// sector ("SW1A 1"), or a full postcode, parsed by the same postcode_parse()
+// the type itself uses -- so "LS1" is district LS1 only, not LS1x (the UK
+// rule: all available digits go to the district unless a space says
+// otherwise). Levels: area, district, sector, walk. lo pads the missing
+// levels with their smallest values; hi is the successor at the last given
+// level, carrying upward. A successor at sector or above lands on an
+// OUTCODE (sector and walk zero) because the outcode sorts before the
+// sectors beneath it; a successor within a sector lands on a full code.
+//
+// District order within a district-1 digit is: none, 0-9, A-Z (the order the
+// fields already compare in), and "x00" is not a district. The area list is
+// append-only and not in alphabetical order after the original entries (GX
+// was added after ZE), so the "next area" is the next in ENCODING order --
+// the same order the values themselves compare in, so tiling still holds.
+
+typedef struct { unsigned area, d1, d2, sec, w1, w2; } gbf;
+
+static postcode gb_make (const gbf *f) {
+   postcode p = 0;
+   SET_AREA(p, f->area);
+   SET_DISTRICT1(p, f->d1);
+   SET_DISTRICT2(p, f->d2);
+   SET_SECTOR(p, f->sec);
+   SET_WALK1(p, f->w1);
+   SET_WALK2(p, f->w2);
+   return p;
+}
+
+static bool gb_next_area (gbf *f) {
+   if (f->area >= N_ELEMS(areas)) return false;
+   f->area++;
+   f->d1 = 1; f->d2 = 0; f->sec = f->w1 = f->w2 = 0;
+   return true;
+}
+
+static bool gb_next_district (gbf *f) {
+   unsigned n;
+   if      (f->d2 == 0)  n = (f->d1 == 1) ? 2 : 1;   // no "x00"
+   else if (f->d2 < 10)  n = f->d2 + 1;
+   else if (f->d2 == 10) n = 18;                      // after 9 comes A
+   else if (f->d2 < 43)  n = f->d2 + 1;
+   else                  n = 0;                       // after Z: carry
+   if (n) {
+      f->d2 = n;
+   } else if (f->d1 < 10) {
+      f->d1++; f->d2 = 0;
+   } else {
+      return gb_next_area(f);
+   }
+   f->sec = f->w1 = f->w2 = 0;
+   return true;
+}
+
+static bool gb_next_sector (gbf *f) {
+   if (f->sec < 10) { f->sec++; f->w1 = f->w2 = 1; return true; }
+   return gb_next_district(f);
+}
+
+static bool gb_next_walk (gbf *f) {
+   if (f->w2 < 26) { f->w2++; return true; }
+   if (f->w1 < 26) { f->w1++; f->w2 = 1; return true; }
+   return gb_next_sector(f);
+}
+
+static bool gb_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+   if (!str) return false;
+   postcode b = postcode_parse(str, true);
+   if (b == 0 || !valid_area(b)) return false;
+   if (GET_DISTRICT1(b) &&
+       (!valid_district1(b) || !valid_district2(b) ||
+        (GET_DISTRICT1(b) == 1 && GET_DISTRICT2(b) == 1))) return false;
+   if (GET_SECTOR(b) && !valid_sector(b)) return false;
+   if (GET_WALK1(b) && !(valid_walk1(b) && valid_walk2(b))) return false;
+
+   gbf f = { GET_AREA(b), GET_DISTRICT1(b), GET_DISTRICT2(b),
+             GET_SECTOR(b), GET_WALK1(b), GET_WALK2(b) };
+   bool ok;
+
+   if (f.w1) {                                      // a full postcode
+      *lo = gb_make(&f);
+      ok = gb_next_walk(&f);
+   } else if (f.sec) {                              // outcode + sector
+      f.w1 = f.w2 = 1;
+      *lo = gb_make(&f);
+      f.w1 = f.w2 = 0;
+      ok = gb_next_sector(&f);
+   } else if (f.d1) {                               // an outcode: the outcode value itself sorts first
+      *lo = gb_make(&f);
+      ok = gb_next_district(&f);
+   } else {                                         // an area
+      f.d1 = 1;
+      *lo = gb_make(&f);
+      ok = gb_next_area(&f);
+   }
+
+   *unbounded = !ok;
+   if (ok) *hi = gb_make(&f);
+   return true;
+}
+
 const pc_encoder pc_gb_encoder = {
    .name         = "GB",
    .max_text_len = GB_MAX_TEXT_LEN,
    .parse        = gb_parse,
    .render       = gb_render,
    .valid        = gb_valid,
+   .range        = gb_range,
 };

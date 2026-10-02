@@ -38,6 +38,18 @@ typedef enum {
    PC_FMT_MAX
 } pc_format;
 
+// The format tag with every bit set is reserved and is never a real format:
+// it marks the END-OF-COUNTRY BOUND, the value that sorts after every real
+// value of its country and before the first value of the next one (country
+// bits dominate the comparison, and this is the largest format number).
+// Written "US-~" ('~' is the highest printable character, so it sorts last as
+// text too). It exists because a prefix at the top of a country's space ("US-99")
+// has no successor value, and a range's own "no upper end" would not do: that
+// means the end of the WHOLE value space, so [BR-99000,) would run on through
+// CA, CZ, ... US. It is a bound only, never a postcode: payload is always 0, no
+// encoder will parse or produce it, and is_valid()/to_postal_code() reject it.
+#define PC_FMT_END ((1u << PC_FORMAT_BITS) - 1)
+
 // Implemented once per format (postal_code_us.c, postal_code_ca.c,
 // ...), each exposing one `const pc_encoder` instance, and wired
 // into pc_formats[] in postal_code_fmt.c. Adding a country whose
@@ -74,6 +86,30 @@ typedef struct {
 
    __attribute__((warn_unused_result))
    bool     (*valid)  (uint64_t payload);
+
+   // Fragment -> range, for partial match. Given a prefix of a national
+   // code ("750" for FR, "K1" or "K1A 0" for CA, "SW1A" for GB, ...) writes
+   // the half-open payload range [*lo, *hi) of every value that starts with
+   // it. Because each format orders its payload exactly as its text sorts,
+   // every prefix is one contiguous range, and consecutive sibling prefixes
+   // tile with no gap or overlap (hi of "K1A" is lo of "K1B").
+   //
+   //  - *lo is always the smallest VALID value in the range (e.g. "K" gives
+   //    "K0A", the outcode, not a half-filled bit pattern).
+   //  - *hi is the smallest valid value past the range, skipping symbols a
+   //    format never uses (CA's D/F/I/O/Q/U, Eircode's missing letters) and
+   //    carrying into the next sibling at the level above. It is a real
+   //    postcode wherever a successor exists.
+   //  - *unbounded is set instead when there is none -- the prefix reaches
+   //    the top of the country's space ("US-99", "FR-9", the last UK area).
+   //    No real value exists to return then; the SQL layer substitutes the
+   //    end-of-country bound (PC_FMT_END).
+   //
+   // The fragment grammar is not the value grammar: "FR-75" is a fragment
+   // but not a value. Returns false for text that isn't a fragment of this
+   // format. May be NULL for a format that doesn't support ranges yet.
+   __attribute__((warn_unused_result))
+   bool     (*range)  (const char *fragment, uint64_t *lo, uint64_t *hi, bool *unbounded);
 } pc_encoder;
 
 // Array of pointers, not values: a pc_encoder can only be wired in

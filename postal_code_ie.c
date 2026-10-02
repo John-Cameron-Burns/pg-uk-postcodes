@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "postal_code_fmt.h"
+#include "postal_code_range.h"
 
 // Irish Eircode: a 3-character routing key (the outcode) and a
 // 4-character unique identifier, written "A65 F4E2" (space optional on
@@ -127,10 +128,101 @@ static bool ie_valid (uint64_t payload) {
    return true;
 }
 
+// ---- fragment ranges -------------------------------------------------
+// A fragment is 1-3 routing-key characters, or a full routing key and 1-4
+// identifier characters. Levels, most significant first:
+//   0 rk0 (a letter)  1 rk1 (digit)  2 rk2 (digit, or W after D6)  |  3..6 uid
+// with has_uid set exactly when the value is at level 3 or deeper. Same
+// scheme as Canada: pad with the smallest symbols for lo; hi increments the
+// last given level to its next allowed symbol, resets below, and carries up
+// on overflow. D6W is the one routing key whose last character isn't a
+// digit; it sorts between D69 and D70, so the successor of D69 is D6W and of
+// D6W is D70.
+
+static bool ie_next_symbol (int v[7], int level) {
+   switch (level) {
+   case 0:
+      if (v[0] >= IE_NSYM - 1) return false;
+      v[0]++;
+      return true;
+   case 1:
+      if (v[1] >= 9) return false;
+      v[1]++;
+      return true;
+   case 2:
+      if (v[2] < 9) { v[2]++; return true; }
+      if (v[2] == 9 && IE_ALPHABET[v[0]] == 'D' && v[1] == 6) { v[2] = ie_index('W'); return true; }
+      return false;
+   default:
+      if (v[level] >= IE_NSYM - 1) return false;
+      v[level]++;
+      return true;
+   }
+}
+
+static uint64_t ie_pack (const int v[7], bool has_uid) {
+   uint64_t p = 0;
+   for (int i = 0; i < 3; i++)
+      SET_BITS64(p, IE_RK_POS + (2 - i) * IE_SYM_BITS, IE_SYM_BITS, (uint64_t) v[i]);
+   if (has_uid) {
+      SET_BITS64(p, IE_HAS_UID_POS, 1, 1);
+      for (int i = 3; i < 7; i++)
+         SET_BITS64(p, IE_UID_POS + (6 - i) * IE_SYM_BITS, IE_SYM_BITS, (uint64_t) v[i]);
+   }
+   return p;
+}
+
+static bool ie_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+   if (!str) return false;
+
+   int v[7] = { 0, 0, 0, 0, 0, 0, 0 };
+   int depth = 0;
+   const char *s = str;
+
+   while (*s == ' ') s++;
+   for (; depth < 3 && *s && *s != ' '; depth++, s++) {
+      int i = ie_index(*s);
+      if (i < 0) return false;
+      if (depth == 0 && i < IE_FIRST_LETTER) return false;                 // a letter
+      if (depth == 1 && i > 9) return false;                               // a digit
+      if (depth == 2 && i > 9 &&
+          !(IE_ALPHABET[i] == 'W' && IE_ALPHABET[v[0]] == 'D' && v[1] == 6)) return false;
+      v[depth] = i;
+   }
+   while (*s == ' ') s++;
+   for (; depth < 7 && *s; depth++, s++) {
+      if (depth < 3) return false;                                         // space inside the routing key
+      int i = ie_index(*s);
+      if (i < 0) return false;
+      v[depth] = i;
+   }
+   while (*s == ' ') s++;
+   if (depth == 0 || *s != '\0') return false;
+
+   // pad: a routing key needs a letter first, so its smallest is A
+   int pad[7];
+   for (int i = 0; i < 7; i++) pad[i] = v[i];
+   if (depth < 1) pad[0] = IE_FIRST_LETTER;
+   *lo = ie_pack(pad, depth >= 4);
+
+   int w[7];
+   for (int i = 0; i < 7; i++) w[i] = v[i];
+   for (int level = depth - 1; ; level--) {
+      if (ie_next_symbol(w, level)) {
+         for (int j = level + 1; j < 7; j++) w[j] = 0;
+         *hi = ie_pack(w, level >= 3);
+         *unbounded = false;
+         return true;
+      }
+      if (level == 0) { *unbounded = true; return true; }
+   }
+}
+
 const pc_encoder pc_ie_encoder = {
    .name         = "IE",
    .max_text_len = IE_MAX_TEXT_LEN,
    .parse        = ie_parse,
    .render       = ie_render,
    .valid        = ie_valid,
+   .range        = ie_range,
 };

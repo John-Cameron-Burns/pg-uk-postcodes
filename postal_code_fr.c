@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "postal_code_fmt.h"
+#include "postal_code_range.h"
 
 // French postal code: always exactly 5 digits (e.g. 75001), no
 // separator, no optional sub-field -- unlike US/CA there's no
@@ -97,10 +98,29 @@ static bool fr_valid (uint64_t payload) {
    return FR_GET_VALUE(payload) <= 99999;
 }
 
+// Fragment: 1-5 leading digits. A prefix of k digits is every code starting
+// with them, so 750 is [75000, 76000); a full 5-digit code is a range of one.
+// (The CEDEX suffix is not part of a fragment.)
+static bool fr_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+   if (!str) return false;
+   int k = 0;
+   uint32_t p = 0;
+   while (k < 5 && is_digit(str[k])) p = p * 10 + (uint32_t) (str[k++] - '0');
+   if (k == 0 || str[k] != '\0') return false;
+
+   uint32_t l, h;
+   pc_digit_prefix_bounds(p, k, 5, &l, &h);
+   *lo = l;
+   *unbounded = h > 99999;
+   if (!*unbounded) *hi = h;
+   return true;
+}
+
 const pc_encoder pc_fr_encoder = {
    .name         = "FR",
    .max_text_len = FR_MAX_TEXT_LEN,
    .parse        = fr_parse,
    .render       = fr_render,
    .valid        = fr_valid,
+   .range        = fr_range,
 };

@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "postal_code_fmt.h"
+#include "postal_code_range.h"
 
 // Canadian postal code, format ANA NAN (e.g. K1A 0B1): forward
 // sortation area (FSA, first 3 chars) then local delivery unit
@@ -193,10 +194,88 @@ static bool ca_valid (uint64_t payload) {
    return true;
 }
 
+// ---- fragment ranges -------------------------------------------------
+// A fragment is 1-6 characters of the usual pattern (letter, digit, letter,
+// digit, letter, digit; spaces ignored). Levels, most significant first:
+//   0 letter1  1 digit1  2 letter2  |  3 digit2  4 letter3  5 digit3
+// with has_ldu set exactly when the value is at level 3 or deeper. The range
+// of a fragment ending at level L is [fragment padded with the smallest
+// symbols, successor at level L): the successor increments level L to its
+// next ALLOWED symbol (skipping D/F/I/O/Q/U, and W/Z for letter1), resets
+// everything below it, and on overflow carries to level L-1. Carrying out of
+// the LDU (3 -> 2) lands on the next FSA's outcode, since the presence bit
+// goes back to 0; carrying out of level 0 means there is no successor.
+
+static uint32_t ca_excl (int level) { return level == 0 ? CA_EXCLUDE_FIRST : CA_EXCLUDE_GENERAL; }
+
+static bool ca_next_symbol (int v[6], int level) {
+   if (level % 2 == 1) {                        // digit levels: 1, 3, 5
+      if (v[level] >= 9) return false;
+      v[level]++;
+      return true;
+   }
+   for (int a = v[level] + 1; a < 26; a++)
+      if (ca_letter_ok((uint64_t) a, ca_excl(level))) { v[level] = a; return true; }
+   return false;
+}
+
+static uint64_t ca_pack (const int v[6], bool has_ldu) {
+   uint64_t p = 0;
+   CA_SET_LETTER1(p, (uint64_t) v[0]);
+   CA_SET_DIGIT1(p,  (uint64_t) v[1]);
+   CA_SET_LETTER2(p, (uint64_t) v[2]);
+   if (has_ldu) {
+      CA_SET_HAS_LDU(p, 1);
+      CA_SET_DIGIT2(p,  (uint64_t) v[3]);
+      CA_SET_LETTER3(p, (uint64_t) v[4]);
+      CA_SET_DIGIT3(p,  (uint64_t) v[5]);
+   }
+   return p;
+}
+
+static bool ca_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+   if (!str) return false;
+
+   int v[6] = { 0, 0, 0, 0, 0, 0 };
+   int depth = 0;
+   const char *s = str;
+   for (; depth < 6; depth++) {
+      while (*s == ' ') s++;
+      if (*s == '\0') break;
+      char ch = *s;
+      if (ch >= 'a' && ch <= 'z') ch = (char) (ch - 32);
+      if (depth % 2 == 0) {                      // letter levels: 0, 2, 4
+         if (!is_alpha(ch) || !ca_letter_ok((uint64_t) (ch - 'A'), ca_excl(depth))) return false;
+         v[depth] = ch - 'A';
+      } else {
+         if (!is_digit(ch)) return false;
+         v[depth] = ch - '0';
+      }
+      s++;
+   }
+   while (*s == ' ') s++;
+   if (depth == 0 || *s != '\0') return false;
+
+   *lo = ca_pack(v, depth >= 4);
+
+   int w[6];
+   for (int i = 0; i < 6; i++) w[i] = v[i];
+   for (int level = depth - 1; ; level--) {
+      if (ca_next_symbol(w, level)) {
+         for (int j = level + 1; j < 6; j++) w[j] = 0;
+         *hi = ca_pack(w, level >= 3);
+         *unbounded = false;
+         return true;
+      }
+      if (level == 0) { *unbounded = true; return true; }
+   }
+}
+
 const pc_encoder pc_ca_encoder = {
    .name         = "CA",
    .max_text_len = CA_MAX_TEXT_LEN,
    .parse        = ca_parse,
    .render       = ca_render,
    .valid        = ca_valid,
+   .range        = ca_range,
 };
