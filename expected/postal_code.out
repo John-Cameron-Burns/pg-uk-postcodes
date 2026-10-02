@@ -202,6 +202,39 @@ SELECT 'LU-L-13'::postal_code;
 ERROR:  cannot parse "L-13" as a LU postal code
 LINE 1: SELECT 'LU-L-13'::postal_code;
                ^
+-- France: CEDEX is accepted and normalised away. The 5 digits are a real,
+-- distinct postcode (GeoNames' FR rows carrying a CEDEX suffix almost
+-- never have a bare row for the same 5 digits) and "CEDEX [n]" is routing
+-- for the address, not part of the code. Exactly NNNNN [CEDEX [n]] is
+-- accepted -- NOT "ignore whatever follows the digits".
+SELECT 'FR-75054 CEDEX 01'::postal_code, 'FR-75054 CEDEX'::postal_code, 'fr-75054 cedex 9'::postal_code;
+ postal_code | postal_code | postal_code 
+-------------+-------------+-------------
+ FR-75054    | FR-75054    | FR-75054
+(1 row)
+
+SELECT 'FR-75054 CEDEX 01'::postal_code = 'FR-75054'::postal_code AS cedex_normalised_away;
+ cedex_normalised_away 
+-----------------------
+ t
+(1 row)
+
+SELECT 'FR-78078 CITYSSIMO'::postal_code;
+ERROR:  cannot parse "78078 CITYSSIMO" as a FR postal code
+LINE 1: SELECT 'FR-78078 CITYSSIMO'::postal_code;
+               ^
+SELECT 'FR-75001 foo'::postal_code;
+ERROR:  cannot parse "75001 foo" as a FR postal code
+LINE 1: SELECT 'FR-75001 foo'::postal_code;
+               ^
+SELECT 'FR-75054 CEDEX 123'::postal_code;
+ERROR:  cannot parse "75054 CEDEX 123" as a FR postal code
+LINE 1: SELECT 'FR-75054 CEDEX 123'::postal_code;
+               ^
+SELECT 'FR-75054CEDEX'::postal_code;
+ERROR:  cannot parse "75054CEDEX" as a FR postal code
+LINE 1: SELECT 'FR-75054CEDEX'::postal_code;
+               ^
 -- Eircode letters are limited to A C D E F H K N P R T V W X Y, and only
 -- D6W breaks the letter-digit-digit routing key shape
 SELECT 'IE-B65'::postal_code;
@@ -285,7 +318,7 @@ INSERT INTO geonames_sample VALUES
    ('GB', 'PE22'), ('GB', 'IP12'), ('GB', 'M24'),
    ('IE', 'F28'), ('IE', 'P72'), ('IE', 'R21'), ('IE', 'K67'), ('IE', 'D14'),
    ('IE', 'E41'), ('IE', 'H12'), ('IE', 'D6W'),
-   ('FR', '75001'), ('FR', '04004'),
+   ('FR', '75001'), ('FR', '04004'), ('FR', '75054 CEDEX 01'), -- real: a CEDEX code is its own postcode
    ('BR', '08970-000'), ('BR', '29640-000'),
    ('CZ', '507 52'), ('CZ', '751 25'),
    ('LU', 'L-1311'), ('LU', 'L-4942');
@@ -293,51 +326,52 @@ INSERT INTO geonames_sample VALUES
 SELECT country_code, national_code, postal_code(country_code, national_code)
 FROM geonames_sample
 ORDER BY country_code, national_code;
- country_code | national_code | postal_code  
---------------+---------------+--------------
- BR           | 08970-000     | BR-08970-000
- BR           | 29640-000     | BR-29640-000
- CA           | B6L           | CA-B6L
- CA           | E5L           | CA-E5L
- CA           | G9X           | CA-G9X
- CA           | L6Y           | CA-L6Y
- CA           | L7E           | CA-L7E
- CA           | R0A           | CA-R0A
- CA           | R7B           | CA-R7B
- CA           | T0A           | CA-T0A
- CA           | T0B           | CA-T0B
- CA           | T2E           | CA-T2E
- CA           | T3T 0E5       | CA-T3T 0E5
- CA           | V3E           | CA-V3E
- CA           | V3Y 0H2       | CA-V3Y 0H2
- CA           | V8G           | CA-V8G
- CZ           | 507 52        | CZ-507 52
- CZ           | 751 25        | CZ-751 25
- FR           | 04004         | FR-04004
- FR           | 75001         | FR-75001
- GB           | EC2V          | GB-EC2V
- GB           | HP27          | GB-HP27
- GB           | IP12          | GB-IP12
- GB           | KA18          | GB-KA18
- GB           | M24           | GB-M24
- GB           | PE22          | GB-PE22
- GB           | PH26          | GB-PH26
- GB           | TD5           | GB-TD5
- IE           | D14           | IE-D14
- IE           | D6W           | IE-D6W
- IE           | E41           | IE-E41
- IE           | F28           | IE-F28
- IE           | H12           | IE-H12
- IE           | K67           | IE-K67
- IE           | P72           | IE-P72
- IE           | R21           | IE-R21
- LU           | L-1311        | LU-L-1311
- LU           | L-4942        | LU-L-4942
- US           | 00501         | US-00501
- US           | 10001         | US-10001
- US           | 90210         | US-90210
- US           | 99950         | US-99950
-(42 rows)
+ country_code | national_code  | postal_code  
+--------------+----------------+--------------
+ BR           | 08970-000      | BR-08970-000
+ BR           | 29640-000      | BR-29640-000
+ CA           | B6L            | CA-B6L
+ CA           | E5L            | CA-E5L
+ CA           | G9X            | CA-G9X
+ CA           | L6Y            | CA-L6Y
+ CA           | L7E            | CA-L7E
+ CA           | R0A            | CA-R0A
+ CA           | R7B            | CA-R7B
+ CA           | T0A            | CA-T0A
+ CA           | T0B            | CA-T0B
+ CA           | T2E            | CA-T2E
+ CA           | T3T 0E5        | CA-T3T 0E5
+ CA           | V3E            | CA-V3E
+ CA           | V3Y 0H2        | CA-V3Y 0H2
+ CA           | V8G            | CA-V8G
+ CZ           | 507 52         | CZ-507 52
+ CZ           | 751 25         | CZ-751 25
+ FR           | 04004          | FR-04004
+ FR           | 75001          | FR-75001
+ FR           | 75054 CEDEX 01 | FR-75054
+ GB           | EC2V           | GB-EC2V
+ GB           | HP27           | GB-HP27
+ GB           | IP12           | GB-IP12
+ GB           | KA18           | GB-KA18
+ GB           | M24            | GB-M24
+ GB           | PE22           | GB-PE22
+ GB           | PH26           | GB-PH26
+ GB           | TD5            | GB-TD5
+ IE           | D14            | IE-D14
+ IE           | D6W            | IE-D6W
+ IE           | E41            | IE-E41
+ IE           | F28            | IE-F28
+ IE           | H12            | IE-H12
+ IE           | K67            | IE-K67
+ IE           | P72            | IE-P72
+ IE           | R21            | IE-R21
+ LU           | L-1311         | LU-L-1311
+ LU           | L-4942         | LU-L-4942
+ US           | 00501          | US-00501
+ US           | 10001          | US-10001
+ US           | 90210          | US-90210
+ US           | 99950          | US-99950
+(43 rows)
 
 CREATE TABLE addr (id serial primary key, pc postal_code);
 INSERT INTO addr (pc)
@@ -369,6 +403,7 @@ SELECT pc FROM addr ORDER BY pc;
  CZ-751 25
  FR-04004
  FR-75001
+ FR-75054
  GB-EC2V
  GB-HP27
  GB-IP12
@@ -391,7 +426,49 @@ SELECT pc FROM addr ORDER BY pc;
  US-10001
  US-90210
  US-99950
-(42 rows)
+(43 rows)
+
+-- to_postal_code(): NULL-returning counterparts of ::postal_code and
+-- postal_code(cc, code), for loading feeds with rows that are not valid
+-- postcodes (the role topostcode() plays for the UK type) -- a bad row
+-- gives NULL rather than an error that aborts the whole COPY. Strict
+-- parsing stays the default.
+SELECT to_postal_code('FR', '78078 CITYSSIMO') IS NULL AS brand_name_is_null,
+       to_postal_code('FR', '75001 SP 07') IS NULL AS military_designator_is_null,
+       to_postal_code('FR', '75054 CEDEX 01') AS cedex_still_parses,
+       to_postal_code('XX', '12345') IS NULL AS unassigned_country_is_null,
+       to_postal_code('USA', '12345') IS NULL AS malformed_country_is_null,
+       to_postal_code('US', 'nonsense') IS NULL AS unparseable_is_null,
+       to_postal_code('us', '90210') AS good_row_unchanged;
+ brand_name_is_null | military_designator_is_null | cedex_still_parses | unassigned_country_is_null | malformed_country_is_null | unparseable_is_null | good_row_unchanged 
+--------------------+-----------------------------+--------------------+----------------------------+---------------------------+---------------------+--------------------
+ t                  | t                           | FR-75054           | t                          | t                         | t                   | US-90210
+(1 row)
+
+-- the one-argument form takes the same "CC-code" text as ::postal_code
+SELECT to_postal_code('FR-75054 CEDEX 01') AS cedex_ok,
+       to_postal_code('us-90210-1234') AS zip4_ok,
+       to_postal_code('FR-78078 CITYSSIMO') IS NULL AS bad_national_code,
+       to_postal_code('90210') IS NULL AS no_country_prefix,
+       to_postal_code('US:90210') IS NULL AS colon_form,
+       to_postal_code('ZZ-90210') IS NULL AS unassigned_country,
+       to_postal_code('') IS NULL AS empty,
+       to_postal_code(NULL) IS NULL AS null_in;
+ cedex_ok |    zip4_ok    | bad_national_code | no_country_prefix | colon_form | unassigned_country | empty | null_in 
+----------+---------------+-------------------+-------------------+------------+--------------------+-------+---------
+ FR-75054 | US-90210-1234 | t                 | t                 | t          | t                  | t     | t
+(1 row)
+
+SELECT code, to_postal_code('FR', code) FROM (VALUES
+   ('75001'), ('78078 CITYSSIMO'), ('75054 CEDEX 01'), ('AIR'), ('13001')) v(code);
+      code       | to_postal_code 
+-----------------+----------------
+ 75001           | FR-75001
+ 78078 CITYSSIMO | 
+ 75054 CEDEX 01  | FR-75054
+ AIR             | 
+ 13001           | FR-13001
+(5 rows)
 
 -- Country->format assignment is a live SQL table, not compiled in:
 -- assigning a new country to an already-implemented format is a

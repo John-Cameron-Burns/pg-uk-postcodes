@@ -233,9 +233,15 @@ Formats implemented so far:
     code table) is overwhelmingly this shape for Canada, not the full 6
     -character form. D, F, I, O, Q and U never appear in any letter
     position; W and Z additionally never appear as the first letter.
-  * **FR** -- 5 digits. GeoNames' own FR data is ~28% contaminated with
-    trailing `CEDEX`/parcel-locker-brand annotations leaked into the postal
-    code column; these are rejected as garbage, not silently swallowed.
+  * **FR** -- 5 digits; a prefix is not a postcode. `CEDEX` is accepted and
+    normalised away: `FR-75054 CEDEX 01` is stored and rendered as `FR-75054`.
+    A CEDEX code is a real, distinct postcode (in GeoNames' FR rows, ~28% carry
+    a CEDEX suffix, and nearly all of those 5-digit parts appear nowhere else
+    as a bare code), and `CEDEX [n]` is address routing, not part of the code.
+    The grammar is exactly `NNNNN`, `NNNNN CEDEX` or `NNNNN CEDEX n` -- not
+    "ignore whatever follows the digits", so `75001 foo` is still an error. The
+    few other oddities in that data (`SP 07`, `AIR`, `CITYSSIMO`: 21 rows of
+    51,611) are rejected.
   * **BR** -- 5-digit base + optional 3-digit suffix (`NNNNN-NNN`, the CEP).
     Unlike US's `+4`, the suffix has no free value to use as an "absent"
     sentinel (`000` is itself a common real suffix), so presence is a
@@ -253,6 +259,20 @@ Formats implemented so far:
     a complete value on its own, optionally followed by the 4-character unique
     identifier (`A65 F4E2`). Every character comes from 25 symbols: the digits
     and the letters A C D E F H K N P R T V W X Y.
+
+### Loading messy data
+
+`::postal_code` and `postal_code(cc, code)` are strict: a bad value raises, which
+aborts a whole `COPY`/`INSERT`. For feeds that contain rows which aren't valid
+postcodes, `to_postal_code()` returns NULL instead (the role `topostcode()`
+plays for the UK type), so the load can finish and the rejects can be found
+afterwards. It comes in the same two forms as the strict constructors:
+
+    SELECT to_postal_code('FR-75054 CEDEX 01');        -- like ::postal_code
+    SELECT to_postal_code('FR', '75054 CEDEX 01');     -- like postal_code(cc, code)
+
+    INSERT INTO addresses (pc) SELECT to_postal_code(country, code) FROM staging;
+    SELECT * FROM staging WHERE to_postal_code(country, code) IS NULL;
 
 ### Adding a country
 

@@ -154,15 +154,24 @@ int main (void) {
    render(fr1, buf, sizeof buf);
    CHECK(strcmp(buf, "FR-75001") == 0);
 
-   // GeoNames' own FR data is ~28% contaminated with trailing
-   // "CEDEX NN"/brand-name suffixes leaked from address-routing
-   // fields -- these must be rejected, not silently truncated
-   postal_code fr_cedex = make("FR", "75054 CEDEX 01", &ok);
-   CHECK(!ok);
-   (void) fr_cedex;
-   postal_code fr_brand = make("FR", "78078 CITYSSIMO", &ok);
-   CHECK(!ok);
-   (void) fr_brand;
+   // CEDEX is real: "75054 CEDEX 01" carries a distinct 5-digit postcode
+   // plus distribution routing that isn't part of the code. Accepted and
+   // normalised away -- but ONLY exactly NNNNN [CEDEX [n]], not "anything
+   // after the digits".
+   const char *cedex_ok[] = { "75054 CEDEX 01", "75054 CEDEX 1", "75054 CEDEX", "75054  cedex  9 ", "75054 Cedex 20" };
+   for (size_t i = 0; i < sizeof cedex_ok / sizeof cedex_ok[0]; i++) {
+      postal_code c = make("FR", cedex_ok[i], &ok);
+      CHECK(ok);
+      render(c, buf, sizeof buf);
+      CHECK(strcmp(buf, "FR-75054") == 0);
+   }
+   const char *cedex_bad[] = { "78078 CITYSSIMO", "75001 SP 07", "75001 AIR", "75001 foo", "75054 CEDEX 123",
+                               "75054 CEDEX 1x", "75054 CEDEXX", "75054CEDEX", "75054 CEDEX1", "75054 CEDE" };
+   for (size_t i = 0; i < sizeof cedex_bad / sizeof cedex_bad[0]; i++) {
+      postal_code c = make("FR", cedex_bad[i], &ok);
+      CHECK(!ok);
+      (void) c;
+   }
 
    // --- CZ: tolerant of the conventional space being present or not ---
    postal_code cz1 = make("CZ", "110 00", &ok);

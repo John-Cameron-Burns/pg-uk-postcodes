@@ -45,43 +45,70 @@ Datum postal_code_gt       (PG_FUNCTION_ARGS);
 Datum postal_code_lte      (PG_FUNCTION_ARGS);
 Datum postal_code_gte      (PG_FUNCTION_ARGS);
 Datum postal_code_from_parts (PG_FUNCTION_ARGS);
+Datum postal_code_lenient  (PG_FUNCTION_ARGS);
+Datum postal_code_lenient_text (PG_FUNCTION_ARGS);
 Datum postal_code_country  (PG_FUNCTION_ARGS);
 
-// Shared by postal_code_in() and postal_code_from_parts(): validates
-// cc's shape, then resolves it to a format via the SQL
-// postal_code_country_formats table (postal_code_country.c) rather
-// than anything compiled in -- see add_country_format() in this
-// extension's SQL. Always either raises or returns a real,
-// implemented format; never returns PC_FMT_UNKNOWN, so callers don't
-// need their own failure check.
-static pc_format lookup_country (const char *cc, size_t len, char out_iso2[2]) {
-   if (len != 2)
-      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      errmsg (_("\"%.*s\" is not a two-letter country code"), (int) len, cc)));
+// Why a country code failed to resolve, so the strict constructors can
+// raise a specific error and to_postal_code() can decide which of them
+// are "bad input" (NULL) and which are a configuration fault (still raise).
+typedef enum { LC_OK, LC_BAD_SHAPE, LC_NO_ASSIGNMENT, LC_FORMAT_MISSING } lc_result;
+
+// Resolves cc (any case) to a format via the SQL postal_code_country_formats
+// table (postal_code_country.c) -- not anything compiled in; see
+// add_country_format(). On LC_FORMAT_MISSING *format_name is the assigned
+// name this build doesn't have.
+static pc_format lookup_country_try (const char *cc, size_t len, char out_iso2[2],
+                                     lc_result *why, char **format_name) {
+   *why = LC_OK;
+   *format_name = NULL;
+
+   if (len != 2) { *why = LC_BAD_SHAPE; return PC_FMT_UNKNOWN; }
 
    char c0 = cc[0], c1 = cc[1];
    if (c0 >= 'a' && c0 <= 'z') c0 = (char) (c0 - 32);
    if (c1 >= 'a' && c1 <= 'z') c1 = (char) (c1 - 32);
-   if (c0 < 'A' || c0 > 'Z' || c1 < 'A' || c1 > 'Z')
-      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      errmsg (_("\"%.*s\" is not a two-letter country code"), (int) len, cc)));
+   if (c0 < 'A' || c0 > 'Z' || c1 < 'A' || c1 > 'Z') { *why = LC_BAD_SHAPE; return PC_FMT_UNKNOWN; }
 
    out_iso2[0] = c0;
    out_iso2[1] = c1;
 
-   char *format_name = pc_lookup_country_format(out_iso2);
-   if (!format_name)
-      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      errmsg (_("\"%c%c\" is not a supported country code"), c0, c1),
-                      errhint(_("see postal_code_country_formats, or add one with add_country_format()"))));
+   *format_name = pc_lookup_country_format(out_iso2);
+   if (!*format_name) { *why = LC_NO_ASSIGNMENT; return PC_FMT_UNKNOWN; }
 
-   pc_format fmt = pc_format_by_name(format_name);
-   if (fmt == PC_FMT_UNKNOWN)
+   pc_format fmt = pc_format_by_name(*format_name);
+   if (fmt == PC_FMT_UNKNOWN) *why = LC_FORMAT_MISSING;
+   return fmt;
+}
+
+static void lookup_country_raise (lc_result why, const char *cc, size_t len,
+                                  const char iso2[2], const char *format_name) {
+   switch (why) {
+   case LC_BAD_SHAPE:
+      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      errmsg (_("\"%.*s\" is not a two-letter country code"), (int) len, cc)));
+   case LC_NO_ASSIGNMENT:
+      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      errmsg (_("\"%c%c\" is not a supported country code"), iso2[0], iso2[1]),
+                      errhint(_("see postal_code_country_formats, or add one with add_country_format()"))));
+   case LC_FORMAT_MISSING:
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg (_("country \"%c%c\" is assigned to format \"%s\", "
                                 "which this build of postal_code does not have"),
-                              c0, c1, format_name)));
+                              iso2[0], iso2[1], format_name)));
+   case LC_OK:
+      break;
+   }
+}
 
+// Shared by postal_code_in() and postal_code_from_parts(): always either
+// raises or returns a real, implemented format; never PC_FMT_UNKNOWN, so
+// callers don't need their own failure check.
+static pc_format lookup_country (const char *cc, size_t len, char out_iso2[2]) {
+   lc_result why;
+   char *format_name;
+   pc_format fmt = lookup_country_try(cc, len, out_iso2, &why, &format_name);
+   if (why != LC_OK) lookup_country_raise(why, cc, len, out_iso2, format_name);
    return fmt;
 }
 
@@ -244,6 +271,59 @@ Datum postal_code_from_parts (PG_FUNCTION_ARGS) {
                       errmsg (_("cannot parse \"%s\" as a %s postal code"), code, pc_formats[fmt]->name)));
 
    PG_RETURN_POSTAL_CODE(pc_assemble(iso2, fmt, payload));
+}
+
+
+// NULL-returning counterparts of the strict constructors, for loading feeds
+// that contain rows which are not valid postcodes (the same role
+// topostcode() plays for the UK type): a malformed or unassigned country
+// code, or a national code that doesn't parse, yields NULL instead of an
+// error that aborts the whole COPY/INSERT. Strictness stays the default;
+// this is opt-in by name. A country assigned to a format this build
+// doesn't have is a configuration fault, not bad input, and still raises.
+// Two forms, mirroring ::postal_code and postal_code(cc, code):
+//   to_postal_code('FR-75054 CEDEX 01')   and   to_postal_code('FR', '75054 CEDEX 01')
+static bool lenient_build (const char *cc, size_t len, const char *code, postal_code *out) {
+   char iso2[2];
+   lc_result why;
+   char *format_name;
+   pc_format fmt = lookup_country_try(cc, len, iso2, &why, &format_name);
+   if (why == LC_BAD_SHAPE || why == LC_NO_ASSIGNMENT) return false;
+   if (why != LC_OK) lookup_country_raise(why, cc, len, iso2, format_name);
+
+   uint64_t payload;
+   if (! pc_formats[fmt]->parse(code, false, &payload) ||
+       ! pc_formats[fmt]->valid(payload))
+      return false;
+
+   *out = pc_assemble(iso2, fmt, payload);
+   return true;
+}
+
+PG_FUNCTION_INFO_V1(postal_code_lenient);
+
+Datum postal_code_lenient (PG_FUNCTION_ARGS) {
+   char *cc   = text_to_cstring(PG_GETARG_TEXT_PP(0));
+   char *code = text_to_cstring(PG_GETARG_TEXT_PP(1));
+
+   postal_code pc;
+   if (! lenient_build(cc, strlen(cc), code, &pc)) PG_RETURN_NULL();
+   PG_RETURN_POSTAL_CODE(pc);
+}
+
+
+PG_FUNCTION_INFO_V1(postal_code_lenient_text);
+
+Datum postal_code_lenient_text (PG_FUNCTION_ARGS) {
+   char *str = text_to_cstring(PG_GETARG_TEXT_PP(0));
+
+   // same shape rule as postal_code_in(): exactly two characters, a hyphen
+   char *hyphen = strchr(str, '-');
+   if (!hyphen || hyphen - str != 2) PG_RETURN_NULL();
+
+   postal_code pc;
+   if (! lenient_build(str, 2, hyphen + 1, &pc)) PG_RETURN_NULL();
+   PG_RETURN_POSTAL_CODE(pc);
 }
 
 

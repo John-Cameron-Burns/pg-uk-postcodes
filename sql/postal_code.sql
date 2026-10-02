@@ -86,6 +86,18 @@ SELECT 'FR-750'::postal_code;
 SELECT 'CZ-110'::postal_code;
 SELECT 'LU-L-13'::postal_code;
 
+-- France: CEDEX is accepted and normalised away. The 5 digits are a real,
+-- distinct postcode (GeoNames' FR rows carrying a CEDEX suffix almost
+-- never have a bare row for the same 5 digits) and "CEDEX [n]" is routing
+-- for the address, not part of the code. Exactly NNNNN [CEDEX [n]] is
+-- accepted -- NOT "ignore whatever follows the digits".
+SELECT 'FR-75054 CEDEX 01'::postal_code, 'FR-75054 CEDEX'::postal_code, 'fr-75054 cedex 9'::postal_code;
+SELECT 'FR-75054 CEDEX 01'::postal_code = 'FR-75054'::postal_code AS cedex_normalised_away;
+SELECT 'FR-78078 CITYSSIMO'::postal_code;
+SELECT 'FR-75001 foo'::postal_code;
+SELECT 'FR-75054 CEDEX 123'::postal_code;
+SELECT 'FR-75054CEDEX'::postal_code;
+
 -- Eircode letters are limited to A C D E F H K N P R T V W X Y, and only
 -- D6W breaks the letter-digit-digit routing key shape
 SELECT 'IE-B65'::postal_code;
@@ -136,7 +148,7 @@ INSERT INTO geonames_sample VALUES
    ('GB', 'PE22'), ('GB', 'IP12'), ('GB', 'M24'),
    ('IE', 'F28'), ('IE', 'P72'), ('IE', 'R21'), ('IE', 'K67'), ('IE', 'D14'),
    ('IE', 'E41'), ('IE', 'H12'), ('IE', 'D6W'),
-   ('FR', '75001'), ('FR', '04004'),
+   ('FR', '75001'), ('FR', '04004'), ('FR', '75054 CEDEX 01'), -- real: a CEDEX code is its own postcode
    ('BR', '08970-000'), ('BR', '29640-000'),
    ('CZ', '507 52'), ('CZ', '751 25'),
    ('LU', 'L-1311'), ('LU', 'L-4942');
@@ -155,6 +167,30 @@ CREATE INDEX ON addr (pc);
 -- comparisons -- CA sorts before US, and within CA the bare FSA-only
 -- rows interleave correctly against the two full FSA+LDU rows
 SELECT pc FROM addr ORDER BY pc;
+
+-- to_postal_code(): NULL-returning counterparts of ::postal_code and
+-- postal_code(cc, code), for loading feeds with rows that are not valid
+-- postcodes (the role topostcode() plays for the UK type) -- a bad row
+-- gives NULL rather than an error that aborts the whole COPY. Strict
+-- parsing stays the default.
+SELECT to_postal_code('FR', '78078 CITYSSIMO') IS NULL AS brand_name_is_null,
+       to_postal_code('FR', '75001 SP 07') IS NULL AS military_designator_is_null,
+       to_postal_code('FR', '75054 CEDEX 01') AS cedex_still_parses,
+       to_postal_code('XX', '12345') IS NULL AS unassigned_country_is_null,
+       to_postal_code('USA', '12345') IS NULL AS malformed_country_is_null,
+       to_postal_code('US', 'nonsense') IS NULL AS unparseable_is_null,
+       to_postal_code('us', '90210') AS good_row_unchanged;
+-- the one-argument form takes the same "CC-code" text as ::postal_code
+SELECT to_postal_code('FR-75054 CEDEX 01') AS cedex_ok,
+       to_postal_code('us-90210-1234') AS zip4_ok,
+       to_postal_code('FR-78078 CITYSSIMO') IS NULL AS bad_national_code,
+       to_postal_code('90210') IS NULL AS no_country_prefix,
+       to_postal_code('US:90210') IS NULL AS colon_form,
+       to_postal_code('ZZ-90210') IS NULL AS unassigned_country,
+       to_postal_code('') IS NULL AS empty,
+       to_postal_code(NULL) IS NULL AS null_in;
+SELECT code, to_postal_code('FR', code) FROM (VALUES
+   ('75001'), ('78078 CITYSSIMO'), ('75054 CEDEX 01'), ('AIR'), ('13001')) v(code);
 
 -- Country->format assignment is a live SQL table, not compiled in:
 -- assigning a new country to an already-implemented format is a

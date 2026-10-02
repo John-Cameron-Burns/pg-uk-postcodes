@@ -542,6 +542,24 @@ CREATE FUNCTION postal_code(text, text)
    AS 'MODULE_PATHNAME', 'postal_code_from_parts'
    LANGUAGE C STABLE STRICT;
 
+-- NULL-returning counterpart of postal_code(cc, code), for loading feeds
+-- that contain rows which aren't valid postcodes (the role topostcode()
+-- plays for the UK type): a bad or unassigned country, or a national code
+-- that doesn't parse, gives NULL instead of an error that aborts the whole
+-- COPY/INSERT. Strict parsing stays the default; this is opt-in by name.
+-- Two forms, mirroring the strict ones:
+--   to_postal_code('FR-75054 CEDEX 01')   -- like ::postal_code
+--   to_postal_code('FR', '75054 CEDEX 01') -- like postal_code(cc, code)
+CREATE FUNCTION to_postal_code(text)
+   RETURNS postal_code
+   AS 'MODULE_PATHNAME', 'postal_code_lenient_text'
+   LANGUAGE C STABLE STRICT;
+
+CREATE FUNCTION to_postal_code(text, text)
+   RETURNS postal_code
+   AS 'MODULE_PATHNAME', 'postal_code_lenient'
+   LANGUAGE C STABLE STRICT;
+
 CREATE FUNCTION country(postal_code)
    RETURNS text
    AS 'MODULE_PATHNAME', 'postal_code_country'
