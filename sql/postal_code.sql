@@ -875,13 +875,19 @@ FROM pg_extension e, unnest(e.extconfig, e.extcondition) AS u(cfg, cond)
 WHERE e.extname = 'postcode' ORDER BY u.cfg::regclass::text;
 
 -- ===== Fragments that end in a separator, or are just a country's own marker ====
--- Every text prefix of a code is a fragment, including one that stops right after the hyphen
--- of a ZIP+4 or CEP, and "L-" for Luxembourg.
-SELECT lower_bound('US-90210-') AS lo, upper_bound('US-90210-') AS hi, lower_bound('US-90210') = lower_bound('US-90210-') AS same_as_bare;
+-- Every text prefix of a code is a fragment, including one that stops right after the hyphen of
+-- a ZIP+4 or CEP -- text that starts with the hyphen, so the ZIP+4 / suffixed codes under it but
+-- not the bare ZIP5 / base itself. For Luxembourg, "L-" is every code.
+SELECT lower_bound('US-90210-') AS lo, upper_bound('US-90210-') AS hi,
+       'US-90210'::postal_code <@ postal_prefix('US-90210-') AS bare_zip_inside,
+       'US-90210-0001'::postal_code <@ postal_prefix('US-90210-') AS zip4_inside;
 SELECT lower_bound('US-99999-') AS lo, upper_bound('US-99999-') AS hi_is_the_end_of_the_country;
-SELECT lower_bound('BR-01310-') AS lo, upper_bound('BR-01310-') AS hi, upper_bound('BR-01310') = upper_bound('BR-01310-') AS same_as_bare;
+SELECT lower_bound('BR-01310-') AS lo, upper_bound('BR-01310-') AS hi,
+       'BR-01310'::postal_code <@ postal_prefix('BR-01310-') AS bare_base_inside,
+       'BR-01310-000'::postal_code <@ postal_prefix('BR-01310-') AS suffix_000_inside;
 SELECT lower_bound('LU-L') AS lo, upper_bound('LU-L') AS hi_is_the_end_of_the_country, lower_bound('LU-L-') = lower_bound('LU-L') AS same;
-SELECT 'US-90210-1234'::postal_code % 'US-90210-' AS yes, 'US-90211'::postal_code % 'US-90210-' AS no,
+SELECT 'US-90210-1234'::postal_code % 'US-90210-' AS yes, 'US-90210'::postal_code % 'US-90210-' AS bare_is_not,
+       'US-90211-1234'::postal_code % 'US-90210-' AS no,
        'LU-L-1311'::postal_code % 'LU-L-' AS lu_yes, 'LU-1311'::postal_code % 'LU-L' AS lu_bare_yes;
 
 -- ===== Built-in and user assignments =========================================

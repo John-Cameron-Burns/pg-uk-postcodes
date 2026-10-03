@@ -238,6 +238,12 @@ precise variant of the same underlying code -- a ZIP5 vs. that same ZIP5 with
 a +4, an outcode vs. a full postcode in it -- interleaves immediately next to
 the value it refines, rather than being grouped apart from it by format.
 
+One exception, in the UK format: its area list is append-only, so Gibraltar's `GX`,
+added after `ZE`, sorts after `ZE` and not between `GR` and `HA` as the text would.
+It is invisible within a country (Gibraltar is `GI`, whose only area is `GX`), but a
+`GB-GX..` value would sort after every `GB-ZE..`. For the same reason a bare area
+letter (`GB-A`) is not a fragment: the areas starting with it are not contiguous.
+
 Formats implemented so far:
 
   * **US** -- 5-digit ZIP, with an optional `-NNNN` ZIP+4 add-on.

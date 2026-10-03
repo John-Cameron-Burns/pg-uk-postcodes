@@ -106,9 +106,7 @@ static bool us_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
    if (k == 0) return false;
 
    *unbounded = false;
-   // "90210" and "90210-" (a full ZIP and its separator) are the same fragment: the ZIP and every +4 on it
-   bool bare = str[k] == '\0' || (k == 5 && (str[k] == '-' || str[k] == ' ') && str[k + 1] == '\0');
-   if (bare) {
+   if (str[k] == '\0') {
       uint32_t zl, zh;
       pc_digit_prefix_bounds(z, k, 5, &zl, &zh);
       *lo = (uint64_t) zl << US_ZIP5_POS;
@@ -122,7 +120,8 @@ static bool us_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
    int m = 0;
    uint32_t a = 0;
    while (m < 4 && is_digit(p[m])) a = a * 10 + (uint32_t) (p[m++] - '0');
-   if (m == 0 || p[m] != '\0' || (m == 4 && a == 0)) return false;
+   // m == 0 is "90210-": text that starts with the hyphen, so only the +4 codes, not the bare ZIP5 itself
+   if (p[m] != '\0' || (m == 4 && a == 0)) return false;
 
    uint32_t al, ah;
    pc_digit_prefix_bounds(a, m, 4, &al, &ah);

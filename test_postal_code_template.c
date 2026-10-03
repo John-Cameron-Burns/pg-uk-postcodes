@@ -62,10 +62,30 @@ static uint64_t bound (const pc_template *t, const char *frag, bool strict) {
    return lo;
 }
 
+// like bound(), but comparing the text as rendered, separators and all
+static uint64_t bound_raw (const pc_template *t, const char *frag, bool strict) {
+   uint64_t lo = 0, hi = t->total;
+   size_t n = strlen(frag);
+   while (lo < hi) {
+      uint64_t mid = lo + (hi - lo) / 2;
+      char s[64];
+      pc_template_render(t, mid, s);
+      int c = strncmp(s, frag, n);
+      bool before = strict ? c <= 0 : c < 0;
+      if (before) lo = mid + 1; else hi = mid;
+   }
+   return lo;
+}
+
 static void check_fragment (const pc_template *t, const char *frag) {
    char sf[64];
    strip(frag, sf);
-   uint64_t elo = bound(t, sf, false), ehi = bound(t, sf, true);
+   // A fragment that ends in a separator ("12345-") is text that starts with it, so the bare "12345" is
+   // not in it; every other fragment is compared with separators ignored, as they are optional on input.
+   size_t fl = strlen(frag);
+   bool raw = fl && (frag[fl - 1] == ' ' || frag[fl - 1] == '-') && t->has_tail;
+   uint64_t elo = raw ? bound_raw(t, frag, false) : bound(t, sf, false);
+   uint64_t ehi = raw ? bound_raw(t, frag, true)  : bound(t, sf, true);
 
    uint64_t lo = 0, hi = 0;
    bool unb = false;

@@ -304,8 +304,8 @@ bool pc_template_range (const pc_template *t, const char *fragment, uint64_t *lo
    int m = 0;
    if (!scan(t, t->tail_at, t->nitems, &s, true, &tail, &m, &ts) || *s != '\0') return false;
 
-   if (m == 0) {                                    // "12345-": just the separator, so still the whole head's family
-      *lo = offset + head * t->mult;
+   if (m == 0) {                                    // "12345-": starts with the separator, so the tails only, not the bare head
+      *lo = offset + head * t->mult + 1;
       *hi = offset + (head + 1) * t->mult;
       *unbounded = *hi >= t->total;
       return true;

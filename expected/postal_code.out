@@ -1541,9 +1541,9 @@ SELECT lower_bound('XD-98000') AS lo, upper_bound('XD-98000') AS hi;
 (1 row)
 
 SELECT lower_bound('XD-98000-') AS lo, upper_bound('XD-98000-') AS hi;
-    lo    |    hi    
-----------+----------
- XD-98000 | XD-98001
+      lo       |    hi    
+---------------+----------
+ XD-98000-0000 | XD-98001
 (1 row)
 
 SELECT lower_bound('XD-98000-12') AS lo, upper_bound('XD-98000-12') AS hi;
@@ -1581,7 +1581,7 @@ SELECT 'XD-98000-0001'::postal_code % 'XD-98', 'XD-98000'::postal_code % 'XD-980
        'XB-1012 JL'::postal_code % 'XB-1012 J', 'XB-1012 JL'::postal_code !% 'XB-1013', 'XA-00-950'::postal_code % 'XA-0';
  ?column? | ?column? | ?column? | ?column? | ?column? | ?column? 
 ----------+----------+----------+----------+----------+----------
- t        | t        | f        | t        | t        | t
+ t        | f        | f        | t        | t        | t
 (1 row)
 
 -- all of it over an index
@@ -2303,24 +2303,29 @@ WHERE e.extname = 'postcode' ORDER BY u.cfg::regclass::text;
 (3 rows)
 
 -- ===== Fragments that end in a separator, or are just a country's own marker ====
--- Every text prefix of a code is a fragment, including one that stops right after the hyphen
--- of a ZIP+4 or CEP, and "L-" for Luxembourg.
-SELECT lower_bound('US-90210-') AS lo, upper_bound('US-90210-') AS hi, lower_bound('US-90210') = lower_bound('US-90210-') AS same_as_bare;
-    lo    |    hi    | same_as_bare 
-----------+----------+--------------
- US-90210 | US-90211 | t
+-- Every text prefix of a code is a fragment, including one that stops right after the hyphen of
+-- a ZIP+4 or CEP -- text that starts with the hyphen, so the ZIP+4 / suffixed codes under it but
+-- not the bare ZIP5 / base itself. For Luxembourg, "L-" is every code.
+SELECT lower_bound('US-90210-') AS lo, upper_bound('US-90210-') AS hi,
+       'US-90210'::postal_code <@ postal_prefix('US-90210-') AS bare_zip_inside,
+       'US-90210-0001'::postal_code <@ postal_prefix('US-90210-') AS zip4_inside;
+      lo       |    hi    | bare_zip_inside | zip4_inside 
+---------------+----------+-----------------+-------------
+ US-90210-0001 | US-90211 | f               | t
 (1 row)
 
 SELECT lower_bound('US-99999-') AS lo, upper_bound('US-99999-') AS hi_is_the_end_of_the_country;
-    lo    | hi_is_the_end_of_the_country 
-----------+------------------------------
- US-99999 | US-~
+      lo       | hi_is_the_end_of_the_country 
+---------------+------------------------------
+ US-99999-0001 | US-~
 (1 row)
 
-SELECT lower_bound('BR-01310-') AS lo, upper_bound('BR-01310-') AS hi, upper_bound('BR-01310') = upper_bound('BR-01310-') AS same_as_bare;
-    lo    |    hi    | same_as_bare 
-----------+----------+--------------
- BR-01310 | BR-01311 | t
+SELECT lower_bound('BR-01310-') AS lo, upper_bound('BR-01310-') AS hi,
+       'BR-01310'::postal_code <@ postal_prefix('BR-01310-') AS bare_base_inside,
+       'BR-01310-000'::postal_code <@ postal_prefix('BR-01310-') AS suffix_000_inside;
+      lo      |    hi    | bare_base_inside | suffix_000_inside 
+--------------+----------+------------------+-------------------
+ BR-01310-000 | BR-01311 | f                | t
 (1 row)
 
 SELECT lower_bound('LU-L') AS lo, upper_bound('LU-L') AS hi_is_the_end_of_the_country, lower_bound('LU-L-') = lower_bound('LU-L') AS same;
@@ -2329,11 +2334,12 @@ SELECT lower_bound('LU-L') AS lo, upper_bound('LU-L') AS hi_is_the_end_of_the_co
  LU-L-0000 | LU-~                         | t
 (1 row)
 
-SELECT 'US-90210-1234'::postal_code % 'US-90210-' AS yes, 'US-90211'::postal_code % 'US-90210-' AS no,
+SELECT 'US-90210-1234'::postal_code % 'US-90210-' AS yes, 'US-90210'::postal_code % 'US-90210-' AS bare_is_not,
+       'US-90211-1234'::postal_code % 'US-90210-' AS no,
        'LU-L-1311'::postal_code % 'LU-L-' AS lu_yes, 'LU-1311'::postal_code % 'LU-L' AS lu_bare_yes;
- yes | no | lu_yes | lu_bare_yes 
------+----+--------+-------------
- t   | f  | t      | t
+ yes | bare_is_not | no | lu_yes | lu_bare_yes 
+-----+-------------+----+--------+-------------
+ t   | f           | f  | t      | t
 (1 row)
 
 -- ===== Built-in and user assignments =========================================
