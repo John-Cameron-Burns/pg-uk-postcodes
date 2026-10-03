@@ -444,6 +444,88 @@ DEALLOCATE ch_prefix;
 SELECT remove_country_format('CH');
 DELETE FROM addr WHERE pc::text LIKE 'CH-%';
 
+-- ===== Locking a column to a country =======================================
+-- postal_code('US') as a column type, the way PostGIS locks a geometry column
+-- to an SRID with geometry(Point, 4326): the type modifier is the country.
+SELECT format_type('postal_code'::regtype, 658) AS typmod_658_is,
+       format_type('postal_code'::regtype, -1) AS unlocked;
+
+CREATE TEMP TABLE us_only (id serial PRIMARY KEY, pc postal_code('US'));
+CREATE TEMP TABLE anywhere (id serial PRIMARY KEY, pc postal_code);
+
+-- a prefix is accepted (any case) if it agrees with the column's country
+INSERT INTO us_only (pc) VALUES ('US-90210'), ('us-90210-1234'), ('US-10001'), ('us-99950'), ('US-~');
+SELECT id, pc FROM us_only ORDER BY id;
+
+-- ... and a different country is refused, however it is written
+INSERT INTO us_only (pc) VALUES ('CA-K1A 0B1');
+INSERT INTO us_only (pc) VALUES ('GB-SW1A');
+INSERT INTO us_only (pc) VALUES ('CA-~');
+INSERT INTO us_only (pc) VALUES ('nonsense');
+INSERT INTO us_only (pc) VALUES ('US-');
+
+-- PostgreSQL hands a string literal to the input function without the column's
+-- type modifier (it applies the modifier afterwards), so in INSERT/UPDATE the
+-- prefix is always needed, locked column or not; only COPY can omit it (below)
+INSERT INTO us_only (pc) VALUES ('90210');
+INSERT INTO anywhere (pc) VALUES ('90210');
+INSERT INTO anywhere (pc) VALUES ('US-90210'), ('CA-K1A 0B1'), ('GB-SW1A');
+
+-- values built by functions are checked when they are assigned
+INSERT INTO us_only (pc) SELECT postal_code('90210-5678', 'US');
+INSERT INTO us_only (pc) SELECT postal_code('SW1A', 'GB');
+UPDATE us_only SET pc = 'CA-K1A 0B1' WHERE id = 1;
+UPDATE us_only SET pc = 'US-10002' WHERE id = 3;
+SELECT id, pc FROM us_only ORDER BY id;
+
+-- the cast form, and ALTER COLUMN ... TYPE (which fails if any existing value
+-- is from another country, and succeeds once they are gone)
+SELECT 'US-90210'::postal_code('US') AS ok;
+SELECT 'CA-K1A 0B1'::postal_code('US');
+SELECT 'CA-K1A 0B1'::postal_code::postal_code('US');
+ALTER TABLE anywhere ALTER COLUMN pc TYPE postal_code('US');
+DELETE FROM anywhere WHERE pc <> 'US-90210';
+ALTER TABLE anywhere ALTER COLUMN pc TYPE postal_code('US');
+SELECT pc FROM anywhere;
+
+-- COPY does pass the modifier to the input function, so a bulk load into a
+-- locked column can use bare national codes
+COPY us_only (pc) FROM stdin;
+10003
+US-10004
+\.
+COPY us_only (pc) FROM stdin;
+10005
+CA-K1A 0B1
+\.
+SELECT pc FROM us_only ORDER BY id DESC LIMIT 3;
+
+-- a locked column is an ordinary postal_code column to everything else
+CREATE INDEX ON us_only (pc);
+SELECT count(*) AS zips_starting_9 FROM us_only WHERE pc % 'US-9';
+SELECT count(*) AS in_range FROM us_only WHERE pc <@ postal_prefix('US-1000');
+SELECT outcode(pc) AS outcode, country(pc) AS country FROM us_only WHERE id = 2;
+
+-- what is locked to what
+SELECT table_name, column_name, locked_to_country FROM postal_code_columns
+WHERE table_name IN ('us_only', 'anywhere') ORDER BY table_name, column_name;
+
+-- bad modifiers
+CREATE TEMP TABLE bad1 (pc postal_code('USA'));
+CREATE TEMP TABLE bad2 (pc postal_code('U1'));
+CREATE TEMP TABLE bad3 (pc postal_code());
+CREATE TEMP TABLE bad4 (pc postal_code('US', 'CA'));
+CREATE TEMP TABLE lower_case_is_fine (pc postal_code('ca'));
+SELECT format_type(atttypid, atttypmod) AS declared FROM pg_attribute
+WHERE attrelid = 'lower_case_is_fine'::regclass AND attname = 'pc';
+
+-- a lock to a country with nothing assigned is accepted (a column definition
+-- has to survive a restore before the assignment data does) but nothing can
+-- ever go into it
+CREATE TEMP TABLE nowhere (pc postal_code('ZZ'));
+INSERT INTO nowhere VALUES ('ZZ-12345');
+SELECT is_valid('12345', 'ZZ') AS can_anything_be_valid_there;
+
 -- ===== outcode() and district() ==============================================
 -- The area part of a postcode, as a complete valid postcode of its own.
 -- district() is the same function under its other name.

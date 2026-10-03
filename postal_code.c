@@ -9,6 +9,7 @@
 #include <access/htup_details.h>
 #include <catalog/namespace.h>
 #include <catalog/pg_type.h>
+#include <utils/array.h>
 #include <commands/trigger.h>
 #include <nodes/makefuncs.h>
 #include <nodes/nodeFuncs.h>
@@ -67,6 +68,9 @@ Datum postal_code_prefix_support (PG_FUNCTION_ARGS);
 Datum postal_code_partial (PG_FUNCTION_ARGS);
 Datum postal_code_not_partial (PG_FUNCTION_ARGS);
 Datum postal_code_partial_support (PG_FUNCTION_ARGS);
+Datum postal_code_typmod_in (PG_FUNCTION_ARGS);
+Datum postal_code_typmod_out (PG_FUNCTION_ARGS);
+Datum postal_code_enforce (PG_FUNCTION_ARGS);
 Datum postal_code_formats_changed (PG_FUNCTION_ARGS);
 Datum postal_code_lenient_text (PG_FUNCTION_ARGS);
 Datum postal_code_country  (PG_FUNCTION_ARGS);
@@ -134,6 +138,29 @@ static pc_format lookup_country (const char *cc, size_t len, char out_iso2[2]) {
    return fmt;
 }
 
+static inline bool ascii_alpha (char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+static inline char ascii_upper (char c) { return (c >= 'a' && c <= 'z') ? (char) (c - 32) : c; }
+
+// A column declared postal_code('US') carries the country as its type modifier
+// (typmod): the packed ISO letters, so 0..825, with -1 meaning "not locked".
+// Checked wherever a value enters a column: text input (which then also
+// accepts the national code with no "US-" in front), binary receive, and the
+// length-coercion cast PostgreSQL applies on INSERT/UPDATE/::postal_code('US').
+static void raise_lock_mismatch (const char *have, const char *want) {
+   ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                   errmsg (_("postal code of country \"%s\" does not match the column's country \"%s\""), have, want),
+                   errhint(_("the column is declared postal_code('%s')"), want)));
+}
+
+static void check_lock (postal_code pc, int32 typmod) {
+   if (typmod < 0 || (int32) GET_COUNTRY(pc) == typmod) return;
+   char have[2], want[2];
+   pc_unpack_country((uint16_t) GET_COUNTRY(pc), have);
+   pc_unpack_country((uint16_t) typmod, want);
+   char h[3] = { have[0], have[1], 0 }, w[3] = { want[0], want[1], 0 };
+   raise_lock_mismatch(h, w);
+}
+
 // Builds a postal_code from an already-identified country/format
 // and a national-part payload -- the one place country/format
 // packing happens, so postal_code_in() and postal_code_from_parts()
@@ -151,40 +178,56 @@ PG_FUNCTION_INFO_V1(postal_code_in);
 
 Datum postal_code_in (PG_FUNCTION_ARGS) {
    char *str = PG_GETARG_CSTRING(0);
+   int32 typmod = PG_GETARG_INT32(2);       // -1, or the country the column is locked to
+
+   char locked[3] = { 0, 0, 0 };
+   if (typmod >= 0) {
+      char l[2];
+      pc_unpack_country((uint16_t) typmod, l);
+      locked[0] = l[0]; locked[1] = l[1];
+   }
 
    // UPU form: ISO 3166-1 alpha-2, a hyphen, then the national code
-   // ("US-90210-1234"). The country is always exactly two characters,
-   // so the FIRST hyphen is unambiguously the delimiter even for
-   // national codes that contain hyphens of their own (US ZIP+4, BR CEP).
-   char *hyphen = strchr(str, '-');
-   if (!hyphen || hyphen - str != 2)
+   // ("US-90210-1234"). The country is always exactly two characters, so
+   // the FIRST hyphen is unambiguously the delimiter even for national codes
+   // that contain hyphens of their own (US ZIP+4, BR CEP).
+   bool prefixed = ascii_alpha(str[0]) && ascii_alpha(str[1]) && str[2] == '-';
+
+   char country[3];
+   const char *national;
+   if (prefixed) {
+      country[0] = ascii_upper(str[0]);
+      country[1] = ascii_upper(str[1]);
+      country[2] = '\0';
+      national = str + 3;
+      if (locked[0] && strcmp(country, locked) != 0) raise_lock_mismatch(country, locked);
+   } else if (locked[0]) {
+      // a locked column already knows its country, so the bare national
+      // code is enough: '90210' into a postal_code('US') column
+      strcpy(country, locked);
+      national = str;
+   } else {
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       errmsg (_("postal_code requires a two-letter country prefix, e.g. \"US-90210\"")),
                       errhint(_("got \"%s\""), str)));
+   }
 
    // "CC-~" is the end-of-country bound (see PC_FMT_END): not a postcode,
    // only ever the upper end of a range. It must be written exactly, so an
    // empty or missing national code ("US-") is still an error rather than
    // quietly becoming a marker.
-   if (strcmp(hyphen + 1, "~") == 0) {
-      char c0 = str[0], c1 = str[1];
-      if (c0 >= 'a' && c0 <= 'z') c0 = (char) (c0 - 32);
-      if (c1 >= 'a' && c1 <= 'z') c1 = (char) (c1 - 32);
-      if (c0 < 'A' || c0 > 'Z' || c1 < 'A' || c1 > 'Z')
-         ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                         errmsg (_("\"%.2s\" is not a two-letter country code"), str)));
-      PG_RETURN_POSTAL_CODE(pc_assemble((char[2]){ c0, c1 }, (pc_format) PC_FMT_END, 0));
-   }
+   if (prefixed && strcmp(national, "~") == 0)
+      PG_RETURN_POSTAL_CODE(pc_assemble(country, (pc_format) PC_FMT_END, 0));
 
    char iso2[2];
-   pc_format fmt = lookup_country(str, 2, iso2);
+   pc_format fmt = lookup_country(country, 2, iso2);
 
    uint64_t payload;
-   if (! pc_formats[fmt]->parse(hyphen + 1, false, &payload) ||
+   if (! pc_formats[fmt]->parse(national, false, &payload) ||
        ! pc_formats[fmt]->valid(payload))
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       errmsg (_("cannot parse \"%s\" as a %s postal code"),
-                              hyphen + 1, pc_formats[fmt]->name)));
+                              national, pc_formats[fmt]->name)));
 
    PG_RETURN_POSTAL_CODE(pc_assemble(iso2, fmt, payload));
 }
@@ -236,6 +279,7 @@ Datum postal_code_recv (PG_FUNCTION_ARGS) {
                       errmsg (_("received binary data is invalid for type postal_code")),
                       errhint(_("server binary format version is %s"), STR(EXTVERSION))));
 
+   check_lock(pc, PG_GETARG_INT32(2));
    PG_RETURN_POSTAL_CODE(pc);
 }
 
@@ -305,9 +349,6 @@ Datum postal_code_gte (PG_FUNCTION_ARGS) {
 // starts that way (LU's "L-1311" has one letter), so it is unambiguous.
 
 typedef enum { SC_OK, SC_NO_COUNTRY, SC_BAD_CC, SC_MISMATCH } sc_result;
-
-static inline bool ascii_alpha (char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
-static inline char ascii_upper (char c) { return (c >= 'a' && c <= 'z') ? (char) (c - 32) : c; }
 
 static sc_result split_country (const char *postcode, const char *cc, char country[3], const char **national) {
    char want[3] = { 0, 0, 0 };
@@ -724,6 +765,67 @@ Datum postal_code_outcode (PG_FUNCTION_ARGS) {
       PG_RETURN_NULL();
 
    SET_PAYLOAD(pc, pc_formats[fmt]->outcode(GET_PAYLOAD(pc)));
+   PG_RETURN_POSTAL_CODE(pc);
+}
+
+
+// ---- country lock: postal_code('US') -----------------------------------------
+// PostGIS locks a geometry column to an SRID with a type modifier, and so
+// does this: CREATE TABLE t (pc postal_code('US')). Quote the code -- an
+// unquoted one that happens to be an SQL keyword (IN, TO, ...) won't parse.
+//
+// typmod_in deliberately validates only the SHAPE (two letters), not whether
+// the country is currently assigned a format: a column definition must be
+// restorable from a dump before postal_code_country_formats' data is, and a
+// lock to a country nothing is assigned to is harmless -- every insert into
+// it fails loudly instead.
+PG_FUNCTION_INFO_V1(postal_code_typmod_in);
+
+Datum postal_code_typmod_in (PG_FUNCTION_ARGS) {
+   ArrayType *ta = PG_GETARG_ARRAYTYPE_P(0);
+   Datum *elems;
+   int n;
+   deconstruct_array(ta, CSTRINGOID, -2, false, TYPALIGN_CHAR, &elems, NULL, &n);
+
+   if (n != 1)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                      errmsg (_("postal_code takes one type modifier, a two-letter country code")),
+                      errhint(_("for example postal_code('US')"))));
+
+   char *cc = DatumGetCString(elems[0]);
+   if (strlen(cc) != 2 || !ascii_alpha(cc[0]) || !ascii_alpha(cc[1]))
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                      errmsg (_("invalid type modifier \"%s\" for postal_code: expected a two-letter country code"), cc),
+                      errhint(_("for example postal_code('US')"))));
+
+   PG_RETURN_INT32((int32) pc_pack_country(ascii_upper(cc[0]), ascii_upper(cc[1])));
+}
+
+PG_FUNCTION_INFO_V1(postal_code_typmod_out);
+
+Datum postal_code_typmod_out (PG_FUNCTION_ARGS) {
+   int32 typmod = PG_GETARG_INT32(0);
+   char *res = palloc(5);
+   if (typmod >= 0 && (typmod >> PC_LETTER_BITS) < 26 && (typmod & ((1 << PC_LETTER_BITS) - 1)) < 26) {
+      char iso2[2];
+      pc_unpack_country((uint16_t) typmod, iso2);
+      sprintf(res, "(%c%c)", iso2[0], iso2[1]);
+   } else {
+      strcpy(res, "(?)");
+   }
+   PG_RETURN_CSTRING(res);
+}
+
+// The length-coercion cast PostgreSQL applies when a value goes into a
+// column with a type modifier (INSERT, UPDATE, ::postal_code('US'), ALTER
+// COLUMN ... TYPE): the value's country must be the column's. Only on
+// assignment and casts, as with every typmod (varchar(n), geometry(Point,
+// 4326)) -- a value merely returned from a function is not re-checked.
+PG_FUNCTION_INFO_V1(postal_code_enforce);
+
+Datum postal_code_enforce (PG_FUNCTION_ARGS) {
+   postal_code pc = PG_GETARG_POSTAL_CODE(0);
+   check_lock(pc, PG_GETARG_INT32(1));
    PG_RETURN_POSTAL_CODE(pc);
 }
 

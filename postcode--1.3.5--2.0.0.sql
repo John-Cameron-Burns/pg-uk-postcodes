@@ -41,7 +41,10 @@ CREATE TYPE postal_code;
 -- wrongly license the planner to constant-fold this across statements,
 -- or to treat an index on an expression using it as never needing a
 -- rebuild after such a reassignment.
-CREATE FUNCTION postal_code_in(cstring)
+--
+-- The 3-argument form of an input function receives the column's type modifier
+-- (see the country lock, below); the same goes for receive.
+CREATE FUNCTION postal_code_in(cstring, oid, integer)
    RETURNS postal_code
    AS 'MODULE_PATHNAME'
    LANGUAGE C STABLE STRICT;
@@ -51,7 +54,7 @@ CREATE FUNCTION postal_code_out(postal_code)
    AS 'MODULE_PATHNAME'
    LANGUAGE C IMMUTABLE STRICT;
 
-CREATE FUNCTION postal_code_recv(internal)
+CREATE FUNCTION postal_code_recv(internal, oid, integer)
    RETURNS postal_code
    AS 'MODULE_PATHNAME'
    LANGUAGE C IMMUTABLE STRICT;
@@ -61,14 +64,48 @@ CREATE FUNCTION postal_code_send(postal_code)
    AS 'MODULE_PATHNAME'
    LANGUAGE C IMMUTABLE STRICT;
 
+CREATE FUNCTION postal_code_typmod_in(cstring[])
+   RETURNS integer
+   AS 'MODULE_PATHNAME'
+   LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION postal_code_typmod_out(integer)
+   RETURNS cstring
+   AS 'MODULE_PATHNAME'
+   LANGUAGE C IMMUTABLE STRICT;
+
 CREATE TYPE postal_code (
    INPUT    = postal_code_in,
    OUTPUT   = postal_code_out,
    RECEIVE  = postal_code_recv,
    SEND     = postal_code_send,
+   TYPMOD_IN  = postal_code_typmod_in,
+   TYPMOD_OUT = postal_code_typmod_out,
    LIKE     = pg_catalog.int8,
    CATEGORY = 'S'
 );
+
+-- The country lock. A column declared postal_code('US') only accepts US
+-- postal codes, the way PostGIS locks a geometry column to an SRID with
+-- geometry(Point, 4326): the type modifier is the country, enforced on
+-- INSERT/UPDATE, on COPY (text and binary) and on ::postal_code('US') casts.
+-- A locked column also accepts the bare national code, since it already knows
+-- the country: '90210' goes into a postal_code('US') column as US-90210. An
+-- unlocked column still requires the CC- prefix. Quote the code ('IN' and 'TO'
+-- are SQL keywords). postal_code_columns, below, shows which columns are locked.
+--
+-- This does not lock the FORMAT, only the country (a country that moves to a
+-- new format keeps working in its column), and it is enforced only where a
+-- value is assigned or cast, as with any type modifier -- a value merely
+-- returned from a function is not re-checked.
+CREATE FUNCTION postal_code_enforce(postal_code, integer, boolean)
+   RETURNS postal_code
+   AS 'MODULE_PATHNAME'
+   LANGUAGE C IMMUTABLE STRICT;
+
+CREATE CAST (postal_code AS postal_code)
+   WITH FUNCTION postal_code_enforce(postal_code, integer, boolean)
+   AS IMPLICIT;
 
 CREATE FUNCTION postal_code_cmp(postal_code, postal_code)
    RETURNS integer
@@ -459,3 +496,23 @@ CREATE OPERATOR !% (
    RESTRICT  = matchingsel,
    JOIN      = matchingjoinsel
 );
+
+
+-- Which columns are locked to which country, the postal_code analogue of
+-- PostGIS's geometry_columns.
+CREATE VIEW postal_code_columns AS
+SELECT n.nspname AS schema_name,
+       c.relname AS table_name,
+       a.attname AS column_name,
+       CASE WHEN a.atttypmod >= 0
+            THEN chr(65 + a.atttypmod / 32) || chr(65 + a.atttypmod % 32)
+       END AS locked_to_country
+FROM pg_attribute a
+JOIN pg_class c ON c.oid = a.attrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE a.atttypid = 'postal_code'::regtype
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+  AND c.relkind IN ('r', 'p', 'v', 'm', 'f');
+COMMENT ON VIEW postal_code_columns IS
+  'Every column of type postal_code, and the country it is locked to (NULL = not locked). A column declared postal_code(''US'') is locked to US.';

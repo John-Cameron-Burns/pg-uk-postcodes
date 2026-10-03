@@ -299,6 +299,39 @@ It is exactly `to_postal_code(...) IS NOT NULL`, so every per-country rule
 (Canadian excluded letters, Eircode's alphabet, ZIP+4 `0000`, ...) is enforced
 by the same parser at ingest and in `is_valid()` -- they cannot disagree.
 
+### Locking a column to a country
+
+Like PostGIS locking a geometry column to an SRID with `geometry(Point, 4326)`, a
+column can be locked to a country with a type modifier:
+
+    CREATE TABLE addresses (id serial, pc postal_code('US'));
+    INSERT INTO addresses (pc) VALUES ('US-10001');     -- a prefix that agrees with the column
+    COPY addresses (pc) FROM stdin;                     -- COPY may use bare national codes: 90210-1234
+    INSERT INTO addresses (pc) VALUES ('CA-K1A 0B1');   -- ERROR: country "CA" does not match the column's country "US"
+    SELECT * FROM postal_code_columns;                   -- which columns are locked to what
+
+It is enforced wherever a value enters a column -- `INSERT`, `UPDATE`, `COPY` (text
+and binary), `::postal_code('US')` and `ALTER COLUMN ... TYPE postal_code('US')`
+(which fails if any existing value is from another country). An unlocked column
+still requires the `CC-` prefix.
+
+Bare national codes (no `CC-`) are accepted **only by `COPY`**: PostgreSQL passes a
+string literal to the input function without the column's type modifier and applies
+the modifier afterwards, so in `INSERT`/`UPDATE` the prefix is always needed. To load
+bare codes with SQL use `postal_code('90210', 'US')`.
+
+* It locks the **country**, not the format, so a country that moves to a new format
+  keeps working in its column.
+* As with any type modifier it is enforced on assignment and casts; a value merely
+  returned from a function is not re-checked.
+* The modifier's *shape* (two letters) is validated when the column is declared,
+  but not whether the country is currently assigned a format. That is deliberate:
+  the column definition has to survive a dump and restore before the data in
+  `postal_code_country_formats` does. A lock to a country with nothing assigned is
+  harmless -- every insert into it fails.
+* There is no storage saving: the value is a fixed 8 bytes and the country stays in
+  every row. The gain is integrity, and the bare-text convenience.
+
 ### Outcode
 
 `outcode(pc)` (and `district(pc)`, the same function) is the area part of a
