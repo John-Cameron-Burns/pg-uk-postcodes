@@ -288,31 +288,89 @@ Datum postal_code_gte (PG_FUNCTION_ARGS) {
 }
 
 
-// Two-argument constructor, analogous to PostGIS's
-// ST_GeomFromText(wkt, srid): for callers that already have country
-// and national code as separate values and don't want to build
-// (and this function then reparse) a "CC-code" string themselves.
-// Unlike ST_SetSRID(), there is no cheap "retag an existing value"
-// counterpart -- see the country/format design notes above
-// pc_format for why that would silently corrupt the payload for
-// any two formats that aren't bit-compatible.
+// ---- postal_code(postcode, cc) -------------------------------------------
+// The postcode may carry its own country as a "CC-" prefix ("US-90210") and
+// the country may also be given separately. Rules:
+//   - prefix and cc both present: they must agree (case-insensitively), else
+//     an error -- two sources of truth that differ are a data bug to surface
+//   - prefix only (cc NULL): the prefix is used
+//   - cc only (no prefix): cc is the country and the whole text is the national code
+//   - neither: an error (strict) / NULL (lenient) -- there is nothing to go on
+// "Has a prefix" means exactly two letters then a hyphen. No national format
+// starts that way (LU's "L-1311" has one letter), so it is unambiguous.
+
+typedef enum { SC_OK, SC_NO_COUNTRY, SC_BAD_CC, SC_MISMATCH } sc_result;
+
+static inline bool ascii_alpha (char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+static inline char ascii_upper (char c) { return (c >= 'a' && c <= 'z') ? (char) (c - 32) : c; }
+
+static sc_result split_country (const char *postcode, const char *cc, char country[3], const char **national) {
+   char want[3] = { 0, 0, 0 };
+   if (cc) {
+      if (strlen(cc) != 2 || !ascii_alpha(cc[0]) || !ascii_alpha(cc[1])) return SC_BAD_CC;
+      want[0] = ascii_upper(cc[0]);
+      want[1] = ascii_upper(cc[1]);
+   }
+
+   if (ascii_alpha(postcode[0]) && ascii_alpha(postcode[1]) && postcode[2] == '-') {
+      country[0] = ascii_upper(postcode[0]);
+      country[1] = ascii_upper(postcode[1]);
+      country[2] = '\0';
+      if (cc && strcmp(country, want) != 0) return SC_MISMATCH;
+      *national = postcode + 3;
+      return SC_OK;
+   }
+
+   if (!cc) return SC_NO_COUNTRY;
+   strcpy(country, want);
+   *national = postcode;
+   return SC_OK;
+}
+
+// postal_code(postcode, cc), analogous to PostGIS's ST_GeomFromText(wkt,
+// srid): for callers that have the national code and the country as
+// separate values, or a "CC-code" string that may or may not also have a
+// separate country column to cross-check against. Unlike ST_SetSRID(),
+// there is no cheap "retag an existing value" counterpart -- that would
+// silently corrupt the payload for any two formats that aren't
+// bit-compatible. NULL postcode gives NULL.
 PG_FUNCTION_INFO_V1(postal_code_from_parts);
 
 Datum postal_code_from_parts (PG_FUNCTION_ARGS) {
-   text *cc_text   = PG_GETARG_TEXT_PP(0);
-   text *code_text = PG_GETARG_TEXT_PP(1);
+   if (PG_ARGISNULL(0)) PG_RETURN_NULL();
 
-   char *cc   = text_to_cstring(cc_text);
-   char *code = text_to_cstring(code_text);
+   char *postcode = text_to_cstring(PG_GETARG_TEXT_PP(0));
+   char *cc       = PG_ARGISNULL(1) ? NULL : text_to_cstring(PG_GETARG_TEXT_PP(1));
+
+   char country[3];
+   const char *national;
+   switch (split_country(postcode, cc, country, &national)) {
+   case SC_BAD_CC:
+      lookup_country_raise(LC_BAD_SHAPE, cc, strlen(cc), "??", NULL);
+      break;
+   case SC_MISMATCH:
+      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      errmsg (_("country code \"%s\" does not match the \"%.2s-\" prefix of \"%s\""),
+                              cc, postcode, postcode),
+                      errhint(_("pass NULL as the country code to use the prefix, or drop the prefix"))));
+      break;
+   case SC_NO_COUNTRY:
+      ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      errmsg (_("\"%s\" has no country: no \"CC-\" prefix, and no country code was given"), postcode),
+                      errhint(_("write it as \"US-90210\", or pass the country as the second argument"))));
+      break;
+   case SC_OK:
+      break;
+   }
 
    char iso2[2];
-   pc_format fmt = lookup_country(cc, strlen(cc), iso2);
+   pc_format fmt = lookup_country(country, 2, iso2);
 
    uint64_t payload;
-   if (! pc_formats[fmt]->parse(code, false, &payload) ||
+   if (! pc_formats[fmt]->parse(national, false, &payload) ||
        ! pc_formats[fmt]->valid(payload))
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      errmsg (_("cannot parse \"%s\" as a %s postal code"), code, pc_formats[fmt]->name)));
+                      errmsg (_("cannot parse \"%s\" as a %s postal code"), national, pc_formats[fmt]->name)));
 
    PG_RETURN_POSTAL_CODE(pc_assemble(iso2, fmt, payload));
 }
@@ -320,23 +378,29 @@ Datum postal_code_from_parts (PG_FUNCTION_ARGS) {
 
 // NULL-returning counterparts of the strict constructors, for loading feeds
 // that contain rows which are not valid postcodes (the same role
-// topostcode() plays for the UK type): a malformed or unassigned country
-// code, or a national code that doesn't parse, yields NULL instead of an
-// error that aborts the whole COPY/INSERT. Strictness stays the default;
-// this is opt-in by name. A country assigned to a format this build
-// doesn't have is a configuration fault, not bad input, and still raises.
-// Two forms, mirroring ::postal_code and postal_code(cc, code):
-//   to_postal_code('FR-75054 CEDEX 01')   and   to_postal_code('FR', '75054 CEDEX 01')
-static bool lenient_build (const char *cc, size_t len, const char *code, postal_code *out) {
+// topostcode() plays for the UK type): anything that would make the strict
+// form raise as bad INPUT -- no country, a country that disagrees with the
+// prefix, a malformed or unassigned country, a national code that doesn't
+// parse -- yields NULL instead of an error that aborts the whole
+// COPY/INSERT. Strictness stays the default; this is opt-in by name. A
+// country assigned to a format this build doesn't have is a configuration
+// fault, not bad input, and still raises. Two forms, mirroring ::postal_code
+// and postal_code(postcode, cc):
+//   to_postal_code('FR-75054 CEDEX 01')   and   to_postal_code('75054 CEDEX 01', 'FR')
+static bool lenient_build (const char *postcode, const char *cc, postal_code *out) {
+   char country[3];
+   const char *national;
+   if (split_country(postcode, cc, country, &national) != SC_OK) return false;
+
    char iso2[2];
    lc_result why;
    char *format_name;
-   pc_format fmt = lookup_country_try(cc, len, iso2, &why, &format_name);
+   pc_format fmt = lookup_country_try(country, 2, iso2, &why, &format_name);
    if (why == LC_BAD_SHAPE || why == LC_NO_ASSIGNMENT) return false;
-   if (why != LC_OK) lookup_country_raise(why, cc, len, iso2, format_name);
+   if (why != LC_OK) lookup_country_raise(why, country, 2, iso2, format_name);
 
    uint64_t payload;
-   if (! pc_formats[fmt]->parse(code, false, &payload) ||
+   if (! pc_formats[fmt]->parse(national, false, &payload) ||
        ! pc_formats[fmt]->valid(payload))
       return false;
 
@@ -347,11 +411,13 @@ static bool lenient_build (const char *cc, size_t len, const char *code, postal_
 PG_FUNCTION_INFO_V1(postal_code_lenient);
 
 Datum postal_code_lenient (PG_FUNCTION_ARGS) {
-   char *cc   = text_to_cstring(PG_GETARG_TEXT_PP(0));
-   char *code = text_to_cstring(PG_GETARG_TEXT_PP(1));
+   if (PG_ARGISNULL(0)) PG_RETURN_NULL();
+
+   char *postcode = text_to_cstring(PG_GETARG_TEXT_PP(0));
+   char *cc       = PG_ARGISNULL(1) ? NULL : text_to_cstring(PG_GETARG_TEXT_PP(1));
 
    postal_code pc;
-   if (! lenient_build(cc, strlen(cc), code, &pc)) PG_RETURN_NULL();
+   if (! lenient_build(postcode, cc, &pc)) PG_RETURN_NULL();
    PG_RETURN_POSTAL_CODE(pc);
 }
 
@@ -359,14 +425,8 @@ Datum postal_code_lenient (PG_FUNCTION_ARGS) {
 PG_FUNCTION_INFO_V1(postal_code_lenient_text);
 
 Datum postal_code_lenient_text (PG_FUNCTION_ARGS) {
-   char *str = text_to_cstring(PG_GETARG_TEXT_PP(0));
-
-   // same shape rule as postal_code_in(): exactly two characters, a hyphen
-   char *hyphen = strchr(str, '-');
-   if (!hyphen || hyphen - str != 2) PG_RETURN_NULL();
-
    postal_code pc;
-   if (! lenient_build(str, 2, hyphen + 1, &pc)) PG_RETURN_NULL();
+   if (! lenient_build(text_to_cstring(PG_GETARG_TEXT_PP(0)), NULL, &pc)) PG_RETURN_NULL();
    PG_RETURN_POSTAL_CODE(pc);
 }
 

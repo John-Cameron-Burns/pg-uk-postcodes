@@ -197,8 +197,8 @@ data are entirely unaffected by installing or upgrading to 2.0.0.
     SELECT 'CA-K1A 0B1'::postal_code;      -- full FSA+LDU
     SELECT 'CA-T0A'::postal_code;          -- the outcode alone is a complete value
     SELECT 'GB-SW1A'::postal_code;         -- ... as it is for GB and IE
-    SELECT postal_code('US', '90210');     -- two-argument constructor for
-                                            -- separate country/code columns,
+    SELECT postal_code('90210', 'US');     -- two-argument constructor for
+                                            -- separate code/country columns,
                                             -- analogous to PostGIS's
                                             -- ST_GeomFromText(wkt, srid)
     SELECT country('US-90210'::postal_code);  -- 'US'
@@ -216,6 +216,20 @@ outcode/incode structure -- GB, IE, CA and US (`GB-SW1A`, `IE-A65`,
 rows and all 139 IE rows is outcode-only. Where the leading digits are only
 implicitly an outcode (FR, CZ, LU) the full code is required. What is *not*
 valid is the in-between: `GB-SW1A 1` (a sector with no unit) is a fragment.
+
+`postal_code(postcode, cc)` takes the country from `cc`, from the postcode's own
+`CC-` prefix, or from both -- in which case they must agree:
+
+    SELECT postal_code('90210-1234', 'US');      -- country from cc
+    SELECT postal_code('US-90210-1234', NULL);   -- ... or from the prefix; cc may be NULL
+    SELECT postal_code('US-90210-1234', 'US');   -- ... or both, if they agree
+    SELECT postal_code('US-90210', 'CA');        -- ERROR: cc does not match the prefix
+    SELECT postal_code('90210', NULL);           -- ERROR: no country anywhere
+
+A prefix is exactly two letters then a hyphen, which no national format starts
+with (Luxembourg's `L-1311` has one letter), so there is no ambiguity. A NULL
+postcode gives NULL. `to_postal_code(postcode, cc)` and `is_valid(postcode, cc)` follow
+the same rules, giving NULL / false where the strict form would raise.
 
 Countries sort in ISO 3166-1 alpha-2 **text** order unconditionally (`'CA-...'`
 always sorts before `'US-...'`), regardless of how any given country's own
@@ -262,24 +276,24 @@ Formats implemented so far:
 
 ### Loading messy data
 
-`::postal_code` and `postal_code(cc, code)` are strict: a bad value raises, which
+`::postal_code` and `postal_code(postcode, cc)` are strict: a bad value raises, which
 aborts a whole `COPY`/`INSERT`. For feeds that contain rows which aren't valid
 postcodes, `to_postal_code()` returns NULL instead (the role `topostcode()`
 plays for the UK type), so the load can finish and the rejects can be found
 afterwards. It comes in the same two forms as the strict constructors:
 
     SELECT to_postal_code('FR-75054 CEDEX 01');        -- like ::postal_code
-    SELECT to_postal_code('FR', '75054 CEDEX 01');     -- like postal_code(cc, code)
+    SELECT to_postal_code('75054 CEDEX 01', 'FR');     -- like postal_code(postcode, cc)
 
-    INSERT INTO addresses (pc) SELECT to_postal_code(country, code) FROM staging;
-    SELECT * FROM staging WHERE to_postal_code(country, code) IS NULL;
+    INSERT INTO addresses (pc) SELECT to_postal_code(code, country) FROM staging;
+    SELECT * FROM staging WHERE to_postal_code(code, country) IS NULL;
 
 `is_valid()` answers the same question as a boolean, in the same two forms, for
 `CHECK` constraints or for finding the rejects in a staging table (NULL in gives
 NULL out, so a `CHECK` lets NULLs through):
 
     SELECT is_valid('CA-D1A 0B1');                   -- false: D is never used in a Canadian code
-    ALTER TABLE staging ADD CHECK (is_valid(country, code));
+    ALTER TABLE staging ADD CHECK (is_valid(code, country));
 
 It is exactly `to_postal_code(...) IS NOT NULL`, so every per-country rule
 (Canadian excluded letters, Eircode's alphabet, ZIP+4 `0000`, ...) is enforced

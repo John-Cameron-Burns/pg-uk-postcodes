@@ -59,11 +59,27 @@ SELECT 'CA-A0A 0A0'::postal_code;
 -- country() accessor
 SELECT country('US-90210'::postal_code), country('CA-K1A 0B1'::postal_code);
 
--- two-argument constructor, analogous to PostGIS's
--- ST_GeomFromText(wkt, srid) -- for callers with country and
--- national code as separate values already
-SELECT postal_code('US', '90210-1234');
-SELECT postal_code('ca', 'k1a0b1'); -- case-insensitive country too
+-- postal_code(postcode, cc), analogous to PostGIS's ST_GeomFromText(wkt,
+-- srid): for callers with the national code and the country as separate
+-- values. The country may also come from the postcode's own "CC-" prefix.
+SELECT postal_code('90210-1234', 'US');
+SELECT postal_code('k1a0b1', 'ca'); -- case-insensitive country too
+
+-- the country can come from cc, from the postcode's own prefix, or from both
+-- (which must agree). A prefix is exactly two letters then a hyphen, which
+-- no national format starts with (LU's 'L-1311' has one letter).
+SELECT postal_code('90210-1234', 'US') AS from_cc,
+       postal_code('US-90210-1234', NULL) AS from_prefix,
+       postal_code('US-90210-1234', 'us') AS both_agree,
+       postal_code('us-90210-1234', 'US') AS prefix_case_insensitive,
+       postal_code('L-1311', 'LU') AS lu_national_code_is_not_a_prefix,
+       postal_code('LU-L-1311', NULL) AS lu_prefixed,
+       postal_code(NULL, 'US') IS NULL AS null_postcode_is_null;
+SELECT postal_code('US-90210', 'CA');   -- cc and prefix disagree
+SELECT postal_code('90210', NULL);      -- no country anywhere
+SELECT postal_code('90210', 'USA');     -- malformed country
+SELECT postal_code('U-90210', NULL);    -- not a prefix, so no country
+SELECT postal_code('US-', NULL);        -- a prefix with nothing after it
 
 
 -- Outcode-only is a complete, valid value wherever a country has a
@@ -154,13 +170,13 @@ INSERT INTO geonames_sample VALUES
    ('LU', 'L-1311'), ('LU', 'L-4942');
 
 -- every row in the fixture must parse and round-trip cleanly
-SELECT country_code, national_code, postal_code(country_code, national_code)
+SELECT country_code, national_code, postal_code(national_code, country_code)
 FROM geonames_sample
 ORDER BY country_code, national_code;
 
 CREATE TABLE addr (id serial primary key, pc postal_code);
 INSERT INTO addr (pc)
-SELECT postal_code(country_code, national_code) FROM geonames_sample;
+SELECT postal_code(national_code, country_code) FROM geonames_sample;
 CREATE INDEX ON addr (pc);
 
 -- a real ORDER BY over a real (if small) index, not just direct
@@ -169,17 +185,17 @@ CREATE INDEX ON addr (pc);
 SELECT pc FROM addr ORDER BY pc;
 
 -- to_postal_code(): NULL-returning counterparts of ::postal_code and
--- postal_code(cc, code), for loading feeds with rows that are not valid
+-- postal_code(postcode, cc), for loading feeds with rows that are not valid
 -- postcodes (the role topostcode() plays for the UK type) -- a bad row
 -- gives NULL rather than an error that aborts the whole COPY. Strict
 -- parsing stays the default.
-SELECT to_postal_code('FR', '78078 CITYSSIMO') IS NULL AS brand_name_is_null,
-       to_postal_code('FR', '75001 SP 07') IS NULL AS military_designator_is_null,
-       to_postal_code('FR', '75054 CEDEX 01') AS cedex_still_parses,
-       to_postal_code('XX', '12345') IS NULL AS unassigned_country_is_null,
-       to_postal_code('USA', '12345') IS NULL AS malformed_country_is_null,
-       to_postal_code('US', 'nonsense') IS NULL AS unparseable_is_null,
-       to_postal_code('us', '90210') AS good_row_unchanged;
+SELECT to_postal_code('78078 CITYSSIMO', 'FR') IS NULL AS brand_name_is_null,
+       to_postal_code('75001 SP 07', 'FR') IS NULL AS military_designator_is_null,
+       to_postal_code('75054 CEDEX 01', 'FR') AS cedex_still_parses,
+       to_postal_code('12345', 'XX') IS NULL AS unassigned_country_is_null,
+       to_postal_code('12345', 'USA') IS NULL AS malformed_country_is_null,
+       to_postal_code('nonsense', 'US') IS NULL AS unparseable_is_null,
+       to_postal_code('90210', 'us') AS good_row_unchanged;
 -- the one-argument form takes the same "CC-code" text as ::postal_code
 SELECT to_postal_code('FR-75054 CEDEX 01') AS cedex_ok,
        to_postal_code('us-90210-1234') AS zip4_ok,
@@ -189,7 +205,13 @@ SELECT to_postal_code('FR-75054 CEDEX 01') AS cedex_ok,
        to_postal_code('ZZ-90210') IS NULL AS unassigned_country,
        to_postal_code('') IS NULL AS empty,
        to_postal_code(NULL) IS NULL AS null_in;
-SELECT code, to_postal_code('FR', code) FROM (VALUES
+-- the same prefix/cc rules: whatever would raise in the strict form is NULL here
+SELECT to_postal_code('US-90210', 'CA') IS NULL AS mismatch_is_null,
+       to_postal_code('90210', NULL) IS NULL AS no_country_is_null,
+       to_postal_code('US-90210', NULL) AS prefix_only,
+       to_postal_code('90210', 'US') AS cc_only,
+       to_postal_code('US-90210', 'us') AS both_agree;
+SELECT code, to_postal_code(code, 'FR') FROM (VALUES
    ('75001'), ('78078 CITYSSIMO'), ('75054 CEDEX 01'), ('AIR'), ('13001')) v(code);
 
 -- the inequality operators carry PostgreSQL's standard selectivity
@@ -212,12 +234,15 @@ SELECT is_valid('US-90210-1234') AS zip4,
        is_valid('ZZ-90210') AS unassigned_country,
        is_valid('GB-SW1A 1') AS fragment,
        is_valid(NULL::text) AS null_in;
-SELECT is_valid('US', '90210') AS good, is_valid('US', 'nonsense') AS bad, is_valid('xx', '1') AS unassigned;
+SELECT is_valid('90210', 'US') AS good, is_valid('nonsense', 'US') AS bad, is_valid('1', 'xx') AS unassigned;
+SELECT is_valid('US-90210', 'CA') AS mismatch, is_valid('90210', NULL) AS no_country,
+       is_valid('US-90210', NULL) AS prefix_only, is_valid('US-90210', 'US') AS both_agree,
+       is_valid(NULL, 'US') AS null_postcode;
 -- agrees with the strict parser on every row of the fixture, good or bad
 SELECT count(*) AS disagreements FROM (VALUES
    ('US','90210'),('CA','T0A'),('GB','SW1A'),('IE','D6W'),('FR','75054 CEDEX 01'),
    ('FR','CITYSSIMO'),('CA','D1A 0B1'),('US','1234'),('LU','1311'),('BR','08970-000'),('CZ','11000')) v(cc, code)
-WHERE is_valid(cc, code) IS DISTINCT FROM (to_postal_code(cc, code) IS NOT NULL);
+WHERE is_valid(code, cc) IS DISTINCT FROM (to_postal_code(code, cc) IS NOT NULL);
 
 -- Country->format assignment is a live SQL table, not compiled in:
 -- assigning a new country to an already-implemented format is a
@@ -251,7 +276,7 @@ SELECT add_country_format('1E', 'FR');
 -- decoding uses the format already packed into the value's own bits,
 -- never a fresh lookup -- but parsing NEW text for that country now
 -- fails
-CREATE TEMP TABLE de_before_removal AS SELECT postal_code('DE', '12345') AS pc;
+CREATE TEMP TABLE de_before_removal AS SELECT postal_code('12345', 'DE') AS pc;
 SELECT remove_country_format('DE');
 SELECT pc FROM de_before_removal; -- still renders fine, unaffected by the removal
 SELECT 'DE-12345'::postal_code;   -- but parsing fresh text for DE fails now
@@ -294,7 +319,7 @@ SELECT 'US-99999'::postal_code < 'US-~'::postal_code AS after_the_last_us_code,
        country('US-~'::postal_code) AS still_knows_its_country;
 -- ... but it is not a postcode: nothing validates, parses or constructs it
 SELECT is_valid('US-~') AS is_valid, to_postal_code('US-~') IS NULL AS to_postal_code_is_null;
-SELECT postal_code('US', '~');
+SELECT postal_code('~', 'US');
 SELECT 'US-'::postal_code;
 SELECT 'U1-~'::postal_code;
 

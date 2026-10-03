@@ -178,38 +178,47 @@ DEFAULT FOR TYPE postal_code USING btree FAMILY postal_code_ops AS
    OPERATOR 5 >,
    FUNCTION 1 postal_code_cmp(postal_code, postal_code);
 
--- Two-argument constructor for callers that already have country
--- and national code as separate values, e.g.
---   SELECT postal_code(country_col, zip_col) FROM addresses;
--- analogous to PostGIS's ST_GeomFromText(wkt, srid). STABLE, not
--- IMMUTABLE -- same reasoning as postal_code_in above.
-CREATE FUNCTION postal_code(text, text)
+-- postal_code(postcode, cc): the constructor for callers that have the national
+-- code and the country as separate values, analogous to PostGIS's
+-- ST_GeomFromText(wkt, srid) -- or a "CC-code" string that may also have a
+-- separate country column to cross-check against:
+--   postal_code('90210-1234', 'US')    the country comes from cc
+--   postal_code('US-90210-1234', NULL) ... or from the prefix, cc may be NULL
+--   postal_code('US-90210-1234', 'US') ... or both, which must agree
+--   postal_code('US-90210', 'CA')      ERROR: they disagree
+--   postal_code('90210', NULL)         ERROR: no country at all
+-- "Has a prefix" means exactly two letters then a hyphen, which no national
+-- format starts with. STABLE, not IMMUTABLE, like postal_code_in. Not STRICT:
+-- a NULL cc is meaningful. A NULL postcode gives NULL.
+CREATE FUNCTION postal_code(postcode text, cc text)
    RETURNS postal_code
    AS 'MODULE_PATHNAME', 'postal_code_from_parts'
-   LANGUAGE C STABLE STRICT;
+   LANGUAGE C STABLE;
 
--- NULL-returning counterpart of postal_code(cc, code), for loading feeds
+-- NULL-returning counterparts of the strict constructors, for loading feeds
 -- that contain rows which aren't valid postcodes (the role topostcode()
--- plays for the UK type): a bad or unassigned country, or a national code
--- that doesn't parse, gives NULL instead of an error that aborts the whole
--- COPY/INSERT. Strict parsing stays the default; this is opt-in by name.
--- Two forms, mirroring the strict ones:
---   to_postal_code('FR-75054 CEDEX 01')   -- like ::postal_code
---   to_postal_code('FR', '75054 CEDEX 01') -- like postal_code(cc, code)
+-- plays for the UK type): anything that would make the strict form raise as
+-- bad input -- no country, a country that disagrees with the prefix, an
+-- unassigned country, a national code that doesn't parse -- gives NULL
+-- instead of an error that aborts the whole COPY/INSERT. Strict parsing
+-- stays the default; this is opt-in by name. Two forms, mirroring the strict
+-- ones:
+--   to_postal_code('FR-75054 CEDEX 01')       -- like ::postal_code
+--   to_postal_code('75054 CEDEX 01', 'FR')    -- like postal_code(postcode, cc)
 CREATE FUNCTION to_postal_code(text)
    RETURNS postal_code
    AS 'MODULE_PATHNAME', 'postal_code_lenient_text'
    LANGUAGE C STABLE STRICT;
 
-CREATE FUNCTION to_postal_code(text, text)
+CREATE FUNCTION to_postal_code(postcode text, cc text)
    RETURNS postal_code
    AS 'MODULE_PATHNAME', 'postal_code_lenient'
-   LANGUAGE C STABLE STRICT;
+   LANGUAGE C STABLE;
 
 -- is_valid(): does this text parse as a postal_code at all? Never raises
--- for bad input (false), NULL in gives NULL out (so it works in a CHECK
--- constraint). Same two forms as the constructors:
---   is_valid('FR-75054 CEDEX 01')    is_valid('FR', '75054 CEDEX 01')
+-- for bad input (false); a NULL postcode gives NULL (so it works in a CHECK
+-- constraint, which lets NULLs through). Same two forms as the constructors:
+--   is_valid('FR-75054 CEDEX 01')    is_valid('75054 CEDEX 01', 'FR')
 -- It is exactly "to_postal_code(...) IS NOT NULL" -- every per-country
 -- restriction (Canadian excluded letters, Eircode's alphabet, ZIP+4 0000,
 -- ...) is enforced by the same parser that enforces it at ingest, so the
@@ -220,10 +229,10 @@ CREATE FUNCTION is_valid(text)
    LANGUAGE sql STABLE STRICT
    AS 'SELECT to_postal_code($1) IS NOT NULL';
 
-CREATE FUNCTION is_valid(text, text)
+CREATE FUNCTION is_valid(postcode text, cc text)
    RETURNS boolean
-   LANGUAGE sql STABLE STRICT
-   AS 'SELECT to_postal_code($1, $2) IS NOT NULL';
+   LANGUAGE sql STABLE
+   AS 'SELECT CASE WHEN $1 IS NULL THEN NULL ELSE to_postal_code($1, $2) IS NOT NULL END';
 
 -- Partial match. A fragment is "CC-" plus a PREFIX of the national code --
 -- 'GB-LS24', 'FR-75', 'CA-K1A 0' -- and matches every value that starts with
@@ -328,7 +337,7 @@ BEGIN
 END;
 $$;
 COMMENT ON FUNCTION remove_country_format(text) IS
-   'Undo add_country_format(): after this, parsing "CC-..."/postal_code(cc, ...) for that country raises rather than resolving to whatever format it used to have. Existing stored values for that country are unaffected -- see postal_code_country_formats'' own comment.';
+   'Undo add_country_format(): after this, parsing "CC-..."/postal_code(..., cc) for that country raises rather than resolving to whatever format it used to have. Existing stored values for that country are unaffected -- see postal_code_country_formats'' own comment.';
 
 
 -- A range of postal codes: a native PostgreSQL range type, so it comes with
