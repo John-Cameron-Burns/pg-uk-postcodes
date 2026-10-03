@@ -47,10 +47,10 @@ W = {
  'NC': (FR,'G'), 'PF': (FR,'G'), 'WF': (FR,'G'), 'BL': (FR,'W'), 'MF': (FR,'W'),
  'GI': (GB,'x'),
  # ---- from the GeoNames data ----
- 'AD': ('CCNNN','G'),  'AI': ('NNNN','G'),   'AL': ('NNNN','G'),   'AR': ('NNNN','x'),  'AT': ('NNNN','G'),
+ 'AD': ('CCNNN','G'),  'AI': ('NNNN','G'),   'AL': ('NNNN','G'),   'AR': ('[A]NNNN[AAA]','x'),  'AT': ('NNNN','G'),
  'AU': ('NNNN','G'),   'AX': ('NNNNN','G'),  'AZ': ('CC NNNN','G'), 'BD': ('NNNN','G'),  'BE': ('NNNN','G'),
  'BG': ('NNNN','G'),   'BM': ('AA XX','x'),  'BY': ('NNNNNN','G'), 'CC': ('NNNN','G'),   'CH': ('NNNN','G'),
- 'CL': ('NNN-NNNN','G'), 'CN': ('NNNNNN','G'), 'CO': ('NNNNNN','G'), 'CR': ('NNNNN[-NNNN]','G'),  'CX': ('NNNN','G'),
+ 'CL': ('NNN-NNNN','G'), 'CN': ('NNNNNN','G'), 'CO': ('NNNNNN[-NNN]','G'), 'CR': ('NNNNN[-NNNN]','G'),  'CX': ('NNNN','G'),
  'CY': ('NNNN','G'),   'DE': ('NNNNN','G'),  'DK': ('NNNN','G'),   'DO': ('NNNNN','G'),   'DZ': ('NNNNN','G'),
  'EC': ('NNNNNN','G'), 'EE': ('NNNNN','G'),  'ES': ('NNNNN','G'),  'FI': ('NNNNN','G'),   'FK': (UKT,'G'),
  'FO': ('NNN','G'),    'GL': ('NNNN','G'),   'GS': (UKT,'G'),     'GT': ('NNNNN','G'),    'HK': ('NNNNNN','x'),
@@ -75,7 +75,7 @@ W = {
  'JM': ('NN','W'),     'JO': ('NNNNN','W'),  'KZ': ('NNNNNN','W'), 'XK': ('NNNNN','W'),      'KW': ('NNNNN','W'),
  'KG': ('NNNNNN','W'), 'LA': ('NNNNN','W'),  'LB': ('NNNN[ NNNN]','W'), 'LS': ('NNN','W'),    'LR': ('NNNN','W'),
  'MG': ('NNN','W'),    'MV': ('NNNNN','W'),  'MU': ('XNNNN','W'),  'MN': ('NNNNN','W'),       'ME': ('NNNNN','W'),
- 'MS': ('AAA NNNN','W'), 'MM': ('NNNNN[NN]','x'), 'MZ': ('NNNN','W'), 'NA': ('NNNNN','W'),     'NP': ('NNNNN','W'),
+ 'MS': ('AAA NNNN','W'), 'MM': ('NNNNN[NN]','x'), 'MZ': ('NNNN[-NN]','W'), 'NA': ('NNNNN','W'),     'NP': ('NNNNN','W'),
  'NI': ('NNNNN','W'),  'NE': ('NNNN','W'),   'NG': ('NNNNNN','W'), 'OM': ('NNN','W'),         'PS': ('NNN','W'),
  'PG': ('NNN','W'),    'PY': ('NNNN[NN]','W'), 'KN': ('CCNNNN','W'), 'LC': ('CCNN NNN','W'),  'VC': ('CCNNNN','W'),
  'SA': ('NNNNN[-NNNN]','W'), 'SN': ('NNNNN','W'), 'SH': (UKT,'W'),  'SO': ('AA NNNNN','W'),   'SD': ('NNNNN','W'),
@@ -91,7 +91,7 @@ for c in NONE:
 W['AE'] = ('NNNNN[ NNNNN]', 'x')
 
 NOTES = {
- 'AR': 'NNNN, the minimum and the form GeoNames has; the 1999 ANNNNAAA form (CPA) and ANNNN are not accepted',
+ 'AR': 'NNNN (the legacy code, and what GeoNames has), the province letter + 4 digits (B1832), or the full 8-character CPA (B1832GMR); all three are common in OpenStreetMap',
  'BM': 'AA NN; the second pair is sometimes letters, so X; Wikipedia lists AA NN and AA AA',
  'GI': 'GX11 1AA, the UK format',
  'HK': 'no postal codes; 999077 is the placeholder GeoNames carries',
@@ -106,6 +106,8 @@ NOTES = {
  'IL': '7 digits since 2013; 5-digit codes are still widely used; both accepted',
  'AE': 'no postal code system, but two location schemes: Abu Dhabi has 5-digit area codes (20000 central Abu Dhabi, 23251 Khalifa City, 20014 Yas Island), and Dubai numbers every building with a 10-digit Makani code written NNNNN NNNNN (all 178,171 GeoNames rows are Dubai). One format holds both, so any 5 digits pass. Sharjah\'s PCS is not modelled; most UAE addresses give a PO Box, which is rejected',
  'UM': 'US ZIP (96898)',
+ 'CO': 'six digits, with the optional -NNN extension seen in a quarter of OpenStreetMap values (630001-025)',
+ 'MZ': 'four digits, with the optional -NN extension seen in OpenStreetMap values (0101-01)',
  'MU': 'Wikipedia lists NNNNN and RNNNN (Rodrigues); the first character may be any letter or digit',
  'WF': '986NN; the French format accepts any five digits',
  'PF': '987NN; the French format accepts any five digits',
@@ -144,7 +146,7 @@ EXTRA_NAMES = {'BV': 'Bouvet Island', 'EH': 'Western Sahara'}
 # Template slots are permanent, so they are never derived from sorting: this is the order they were
 # shipped in. A new template is APPENDED here (the generator refuses a template that is missing, so
 # adding a country with a new shape forces this edit).
-SLOT_ORDER = ['AA NNNNN', 'AA XX', 'AAA NNNN', 'AAAA NAA', 'AAANN', 'AAA[ NNNN]', 'AANNNN', 'ANNN', 'AXNNN[NN]', 'CC NNNN', 'CCN-NNNN', 'CCNN NNN', 'CCNNN', 'CCNNNN', 'CCNNNNN', 'NN', 'NN-NNN', 'NNN', 'NNN NN', 'NNN-NNNN', 'NNNN', 'NNNNN', 'NNNNN-NNNNN', 'NNNNNN', 'NNNNN[-NNNN]', 'NNNNN[NN]', 'NNNNN[N]', 'NNNN[ AA]', 'NNNN[ NNNN]', 'NNNN[-A]', 'NNNN[-NNN]', 'NNNN[NN]', 'NNN[-NNN]', 'NNN[N]', 'XNNNN', 'NNNNN[ NNNNN]', 'NNNN[N]']
+SLOT_ORDER = ['AA NNNNN', 'AA XX', 'AAA NNNN', 'AAAA NAA', 'AAANN', 'AAA[ NNNN]', 'AANNNN', 'ANNN', 'AXNNN[NN]', 'CC NNNN', 'CCN-NNNN', 'CCNN NNN', 'CCNNN', 'CCNNNN', 'CCNNNNN', 'NN', 'NN-NNN', 'NNN', 'NNN NN', 'NNN-NNNN', 'NNNN', 'NNNNN', 'NNNNN-NNNNN', 'NNNNNN', 'NNNNN[-NNNN]', 'NNNNN[NN]', 'NNNNN[N]', 'NNNN[ AA]', 'NNNN[ NNNN]', 'NNNN[-A]', 'NNNN[-NNN]', 'NNNN[NN]', 'NNN[-NNN]', 'NNN[N]', 'XNNNN', 'NNNNN[ NNNNN]', 'NNNN[N]', 'NNNNNN[-NNN]', 'NNNN[-NN]', '[A]NNNN[AAA]']
 
 def sql_text(names):
     compiled = set('US CA FR BR CZ LU GB IE'.split())

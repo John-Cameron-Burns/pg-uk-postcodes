@@ -58,13 +58,30 @@ bool pc_template_compile (const char *spec, pc_template *t, char *err, size_t er
       if (!*start || *start == '[') return fail(err, errlen, "\"CC\" must be followed by the code itself");
    }
 
+   // a leading optional group of letters: "[A]NNNN"
+   if (*start == '[') {
+      const char *g = start + 1;
+      while (*g == 'A') {
+         if (t->nitems >= PC_TPL_MAX_ITEMS) return fail(err, errlen, "template is too long");
+         t->item[t->nitems++] = 'A';
+         g++;
+      }
+      if (*g != ']' || g == start + 1)
+         return fail(err, errlen, "a leading optional group is letters only, e.g. [A]NNNN");
+      t->lead_n = t->head_from = t->nitems;
+      start = g + 1;
+      if (*start != 'N')
+         return fail(err, errlen, "the code after a leading optional group must start with a digit (N), "
+                                  "so that codes without the group sort first");
+   }
+
    for (const char *s = start; *s; s++) {
       if (closed) return fail(err, errlen, "nothing may follow the closing \"]\"");
       char c = *s;
       if (is_data(c) || is_literal(c)) {
          if (t->nitems >= PC_TPL_MAX_ITEMS) return fail(err, errlen, "template is too long");
          if (is_literal(c)) {
-            if (t->nitems == 0)
+            if (t->nitems == t->lead_n)
                return fail(err, errlen, "a template cannot start with a separator");
             if (is_literal(t->item[t->nitems - 1]))
                return fail(err, errlen, "two separators in a row");
@@ -75,7 +92,7 @@ bool pc_template_compile (const char *spec, pc_template *t, char *err, size_t er
          t->item[t->nitems++] = c;
       } else if (c == '[') {
          if (in_group) return fail(err, errlen, "only one optional group is allowed");
-         if (t->nitems == 0) return fail(err, errlen, "the optional group cannot be the whole template");
+         if (t->nitems == t->lead_n) return fail(err, errlen, "the optional group cannot be the whole template");
          in_group = true;
          t->tail_at = t->nitems;
       } else if (c == ']') {
@@ -97,7 +114,7 @@ bool pc_template_compile (const char *spec, pc_template *t, char *err, size_t er
 
    t->head_space = 1;
    t->tail_space = t->has_tail ? 1 : 0;
-   for (int i = 0; i < t->nitems; i++) {
+   for (int i = t->head_from; i < t->nitems; i++) {
       if (!is_data(t->item[i])) continue;
       uint64_t *space = i < t->tail_at ? &t->head_space : &t->tail_space;
       if (!mul(*space, radix(t->item[i]), space))
@@ -105,7 +122,16 @@ bool pc_template_compile (const char *spec, pc_template *t, char *err, size_t er
    }
 
    t->mult = t->has_tail ? 1 + t->tail_space : 1;
-   if (!mul(t->head_space, t->mult, &t->total) || t->total > ((uint64_t) 1 << PC_PAYLOAD_BITS))
+   if (!mul(t->head_space, t->mult, &t->body))
+      return fail(err, errlen, "template does not fit in the 48 bits available");
+   t->total = t->body;
+   if (t->lead_n) {
+      t->lead_space = 1;
+      for (int i = 0; i < t->lead_n; i++) t->lead_space *= 26;           // at most 40 letters would overflow: checked below
+      if (t->lead_n > 8 || !mul(1 + t->lead_space, t->body, &t->total))
+         return fail(err, errlen, "template does not fit in the 48 bits available");
+   }
+   if (t->total > ((uint64_t) 1 << PC_PAYLOAD_BITS))
       return fail(err, errlen, "template does not fit in the 48 bits available");
 
    snprintf(t->spec, sizeof t->spec, "%s", spec);
@@ -151,29 +177,42 @@ const char *pc_template_skip_cc (const pc_template *t, const char cc[2], const c
 bool pc_template_parse (const pc_template *t, const char *text, uint64_t *out) {
    if (!text) return false;
    const char *s = text;
+
+   // a leading group is present exactly when the text starts with a letter (the code proper starts with a digit)
+   uint64_t lead = 0;
+   if (t->lead_n && ((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z'))) {
+      uint64_t v = 0, ls = 1;
+      int n = 0;
+      if (!scan(t, 0, t->lead_n, &s, false, &v, &n, &ls)) return false;
+      lead = 1 + v;
+   }
+
    uint64_t head = 0, hs = 1;
    int n = 0;
-   if (!scan(t, 0, t->tail_at, &s, false, &head, &n, &hs)) return false;
+   if (!scan(t, t->head_from, t->tail_at, &s, false, &head, &n, &hs)) return false;
 
-   if (*s == '\0') { *out = head * t->mult; return true; }  // the head alone
-   if (!t->has_tail) return false;                          // trailing garbage
+   uint64_t base = lead * t->body;
+   if (*s == '\0') { *out = base + head * t->mult; return true; }  // the head alone
+   if (!t->has_tail) return false;                                 // trailing garbage
 
    uint64_t tail = 0, ts = 1;
    n = 0;
    if (!scan(t, t->tail_at, t->nitems, &s, false, &tail, &n, &ts) || *s != '\0') return false;
-   *out = head * t->mult + 1 + tail;
+   *out = base + head * t->mult + 1 + tail;
    return true;
 }
 
 int pc_template_render (const pc_template *t, uint64_t payload, char *buf) {
    bool bad = payload >= t->total;
-   uint64_t head = bad ? 0 : payload / t->mult;
-   uint64_t rem  = bad ? 0 : payload % t->mult;
-   bool tail_present = !bad && t->has_tail && rem > 0;
-   uint64_t tail = tail_present ? rem - 1 : 0;
+   uint64_t lead = bad ? 0 : payload / t->body;
+   uint64_t rem  = bad ? 0 : payload % t->body;
+   uint64_t head = bad ? 0 : rem / t->mult;
+   uint64_t tr   = bad ? 0 : rem % t->mult;
+   bool tail_present = !bad && t->has_tail && tr > 0;
+   uint64_t tail = tail_present ? tr - 1 : 0;
 
    // peel symbols off the least significant end, so fill right to left
-   for (int i = t->tail_at - 1; i >= 0; i--) {
+   for (int i = t->tail_at - 1; i >= t->head_from; i--) {
       char kind = t->item[i];
       if (is_literal(kind)) { buf[i] = kind; continue; }
       if (bad) { buf[i] = '?'; continue; }
@@ -191,6 +230,13 @@ int pc_template_render (const pc_template *t, uint64_t payload, char *buf) {
       }
       n = t->nitems;
    }
+   if (lead > 0) {                                   // the leading letters, most significant first
+      uint64_t v = lead - 1;
+      for (int i = t->lead_n - 1; i >= 0; i--) { buf[i] = sym_char('A', (unsigned) (v % 26)); v /= 26; }
+   } else if (t->head_from) {                        // absent: the code starts at the head
+      memmove(buf, buf + t->head_from, (size_t) (n - t->head_from));
+      n -= t->head_from;
+   }
    buf[n] = '\0';
    return n;
 }
@@ -205,32 +251,48 @@ uint64_t pc_template_outcode (const pc_template *t, uint64_t payload) {
 
 // A fragment is any prefix of the code (at least one symbol), separators
 // optional. Its range:
+//   - leading letters only: every code with that start, the leading group
+//     being the most significant part;
 //   - k symbols within the head: every head that starts with them, whatever
 //     follows -- [p * rest, (p+1) * rest) heads, each head's family starting
 //     at its bare form;
 //   - k beyond the head (needs the optional group): that head, and the tails
 //     starting with the rest -- the head's own bare form is excluded.
-// Either way the range ends where the next sibling starts, which is the next
-// head's bare form when this is the last tail, and is unbounded when there
-// is no next head.
+// Either way the range ends where the next sibling starts: the next head's
+// bare form when this is the last tail, and past the end of the space (an
+// unbounded range, which the caller turns into the end-of-country bound) when
+// nothing follows.
 bool pc_template_range (const pc_template *t, const char *fragment, uint64_t *lo, uint64_t *hi, bool *unbounded) {
    if (!fragment) return false;
    const char *s = fragment;
+   uint64_t offset = 0;                            // where this leading group's block starts
+
+   if (t->lead_n && ((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z'))) {
+      uint64_t lv = 0, ls = 1;
+      int m = 0;
+      if (!scan(t, 0, t->lead_n, &s, true, &lv, &m, &ls)) return false;
+      if (*s == '\0') {                            // only (part of) the leading group
+         uint64_t rest = t->lead_space / ls;
+         *lo = (1 + lv * rest) * t->body;
+         *hi = (1 + (lv + 1) * rest) * t->body;
+         *unbounded = *hi >= t->total;
+         return true;
+      }
+      if (m != t->lead_n) return false;             // text went on, so the whole group must have been given
+      offset = (1 + lv) * t->body;
+   }
 
    uint64_t head = 0, hs = 1;
    int k = 0;
-   if (!scan(t, 0, t->tail_at, &s, true, &head, &k, &hs)) return false;
+   if (!scan(t, t->head_from, t->tail_at, &s, true, &head, &k, &hs)) return false;
    if (k == 0) return false;
-
-   *unbounded = false;
-   uint64_t last_head = t->head_space - 1;
 
    // a fragment inside (or exactly at the end of) the head
    if (*s == '\0') {
-      uint64_t rest = t->head_space / hs;        // exact: product of the remaining radices
-      *lo = head * rest * t->mult;
-      uint64_t end = (head + 1) * rest;
-      if (end >= t->head_space) *unbounded = true; else *hi = end * t->mult;
+      uint64_t rest = t->head_space / hs;           // exact: product of the remaining radices
+      *lo = offset + head * rest * t->mult;
+      *hi = offset + (head + 1) * rest * t->mult;
+      *unbounded = *hi >= t->total;
       return true;
    }
 
@@ -242,17 +304,17 @@ bool pc_template_range (const pc_template *t, const char *fragment, uint64_t *lo
    int m = 0;
    if (!scan(t, t->tail_at, t->nitems, &s, true, &tail, &m, &ts) || *s != '\0') return false;
 
-   if (m == 0) {                                // "12345-": just the separator, so still the whole head's family
-      *lo = head * t->mult;
-      if (head == last_head) *unbounded = true; else *hi = (head + 1) * t->mult;
+   if (m == 0) {                                    // "12345-": just the separator, so still the whole head's family
+      *lo = offset + head * t->mult;
+      *hi = offset + (head + 1) * t->mult;
+      *unbounded = *hi >= t->total;
       return true;
    }
 
    uint64_t rest = t->tail_space / ts;
-   *lo = head * t->mult + 1 + tail * rest;
+   *lo = offset + head * t->mult + 1 + tail * rest;
    uint64_t end = (tail + 1) * rest;
-   if (end < t->tail_space)       *hi = head * t->mult + 1 + end;
-   else if (head < last_head)     *hi = (head + 1) * t->mult;
-   else                           *unbounded = true;
+   *hi = end < t->tail_space ? offset + head * t->mult + 1 + end : offset + (head + 1) * t->mult;
+   *unbounded = *hi >= t->total;
    return true;
 }

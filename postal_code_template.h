@@ -16,6 +16,11 @@
 //   X   a digit or a letter        0-9 then A-Z
 //   ' ' or '-'                     a literal separator, at a fixed position
 //   [ ... ]                        one optional group, at the very end
+//   [A...] at the very start       an optional leading group of letters, then a digit:
+//                                  "[A]NNNN[AAA]" is Argentina's "1832", "B1832" and
+//                                  "B1832GMR". Letters only, and the code after it must
+//                                  start with N, so values without it sort first (digits
+//                                  sort before letters) and text order still holds
 //   CC                             (first, optionally followed by a separator) the
 //                                  country's own ISO letters, as in "VG1110" or
 //                                  "AZ 1000": optional on input, checked against the
@@ -53,12 +58,16 @@ typedef struct {
    char     spec[PC_TPL_MAX_ITEMS + 3]; // as written, incl. brackets
    char     item[PC_TPL_MAX_ITEMS + 1]; // per position: 'N' 'A' 'X' or the literal; no brackets
    int      nitems;
+   int      lead_n;                     // letters in a leading optional group (they are items 0..lead_n-1), else 0
+   int      head_from;                  // first position of the head: lead_n
    int      tail_at;                    // first position of the optional group; == nitems if none
    bool     has_tail;
    bool     cc_prefix;                  // spec began "CC": the country's letters may precede the code
    uint64_t head_space;                 // distinct head values
    uint64_t tail_space;                 // distinct tail values (0 if none)
+   uint64_t lead_space;                 // distinct leading groups (26^lead_n), 0 if none
    uint64_t mult;                       // 1 + tail_space if there is a tail, else 1
+   uint64_t body;                       // head_space * mult: the size of one leading-group block
    uint64_t total;                      // payloads 0 .. total-1 are valid
 } pc_template;
 

@@ -1721,7 +1721,7 @@ SELECT count(add_country_template('XA', t)) AS filled FROM (
 ) f;
  filled 
 --------
-     13
+     10
 (1 row)
 
 SELECT count(*) AS slots, min(slot), max(slot) FROM postal_code_templates;
@@ -2119,6 +2119,158 @@ SELECT iso2, format, basis, left(note, 50) AS note FROM postal_code_world WHERE 
  OM   | template:NNN           | Wikipedia       | 
  QA   |                        | no postal codes | 
 (3 rows)
+
+-- ===== Other scripts, and punctuation that is only punctuation ================
+-- Real data writes digits in other scripts, Unicode dashes and spaces, Japan's
+-- postal mark, a Brazilian CEP without its hyphen or with dots, a ZIP+4 without
+-- its hyphen. All of them are the same code re-spelled.
+SELECT cc, written, to_postal_code(written, cc) AS parsed
+FROM (VALUES ('IR', '۱۱۴۱۶۱۳۶۷۵'), ('IR', '۱۱۵۱۷-۱۳۵۱۳'), ('MM', '၀၇၀၉၁'), ('BD', '১২১৪'), ('IN', '४००००१'),
+             ('JP', '〒050−0083'), ('JP', '064‐0915'), ('JP', '〒 100–8111'), ('JP', '１００-８１１１'),
+             ('US', '９０２１０'), ('FR', '７５００８'), ('FR', '75008'), ('FR', '​75008'), ('LU', 'L − 2226'),
+             ('BR', '01139020'), ('BR', '06.026-170'), ('BR', '06026170'), ('BR', '01310-100'), ('BR', '0113902'),
+             ('US', '902101234'), ('US', '90210 1234'), ('US', '902100000'), ('US', '90210-1234'),
+             ('CO', '630001-025'), ('CO', '050010210'), ('CO', '630001'), ('MZ', '0101-01'), ('MZ', '0101')) v(cc, written);
+ cc |        written         |     parsed     
+----+------------------------+----------------
+ IR | ۱۱۴۱۶۱۳۶۷۵   | IR-11416-13675
+ IR | ۱۱۵۱۷-۱۳۵۱۳  | IR-11517-13513
+ MM | ၀၇၀၉၁        | MM-07091
+ BD | ১২১৪           | BD-1214
+ IN | ४००००१     | IN-400001
+ JP | 〒050−0083          | JP-050-0083
+ JP | 064‐0915             | JP-064-0915
+ JP | 〒 100–8111         | JP-100-8111
+ JP | １００-８１１１ | JP-100-8111
+ US | ９０２１０        | US-90210
+ FR | ７５００８        | FR-75008
+ FR | 75008                  | FR-75008
+ FR | ​75008               | FR-75008
+ LU | L − 2226             | LU-L-2226
+ BR | 01139020               | BR-01139-020
+ BR | 06.026-170             | BR-06026-170
+ BR | 06026170               | BR-06026-170
+ BR | 01310-100              | BR-01310-100
+ BR | 0113902                | 
+ US | 902101234              | US-90210-1234
+ US | 90210 1234             | US-90210-1234
+ US | 902100000              | 
+ US | 90210-1234             | US-90210-1234
+ CO | 630001-025             | CO-630001-025
+ CO | 050010210              | CO-050010-210
+ CO | 630001                 | CO-630001
+ MZ | 0101-01                | MZ-0101-01
+ MZ | 0101                   | MZ-0101
+(28 rows)
+
+SELECT 'ir-۱۱۴۱۶۱۳۶۷۵'::postal_code AS a, 'JP-〒050−0083'::postal_code AS b;
+       a        |      b      
+----------------+-------------
+ IR-11416-13675 | JP-050-0083
+(1 row)
+
+-- a GB fragment may end part-way through the unit: "M14 6Q" is a prefix of "M14 6QA".."M14 6QZ"
+SELECT lower_bound('GB-M14 6Q') AS lo, upper_bound('GB-M14 6Q') AS hi;
+     lo     |     hi     
+------------+------------
+ GB-M14 6QA | GB-M14 6RA
+(1 row)
+
+SELECT lower_bound('GB-M14 6Z') AS lo, upper_bound('GB-M14 6Z') AS hi;
+     lo     |     hi     
+------------+------------
+ GB-M14 6ZA | GB-M14 7AA
+(1 row)
+
+SELECT 'GB-M14 6QA'::postal_code % 'GB-M14 6Q' AS yes, 'GB-M14 6RA'::postal_code % 'GB-M14 6Q' AS no,
+       'GB-M14 6QZ'::postal_code <@ postal_prefix('GB-M14 6Q') AS inside, 'GB-M14 6RA'::postal_code <@ postal_prefix('GB-M14 6Q') AS outside;
+ yes | no | inside | outside 
+-----+----+--------+---------
+ t   | f  | t      | f
+(1 row)
+
+SELECT count(*) AS units_in_m14_6q FROM (SELECT postal_code('M14 6' || chr(64 + a) || chr(64 + b), 'GB') AS pc FROM generate_series(1, 26) a, generate_series(1, 26) b) x
+WHERE pc <@ postal_prefix('GB-M14 6Q');
+ units_in_m14_6q 
+-----------------
+              26
+(1 row)
+
+-- ===== A leading letter: Argentina ============================================
+-- NNNN, the province letter + 4 digits, and the full 8-character CPA are all written.
+-- "[A]NNNN[AAA]": the leading letter is optional, so codes without it sort first.
+SELECT written, to_postal_code(written, 'AR') AS parsed
+FROM (VALUES ('1832'), ('B1832'), ('B1832GMR'), ('b1832gmr'), ('B 1832'), ('B-1832'), ('1832GMR'), ('BB1832'), ('B183'), ('B1832GM'), ('')) v(written);
+ written  |   parsed    
+----------+-------------
+ 1832     | AR-1832
+ B1832    | AR-B1832
+ B1832GMR | AR-B1832GMR
+ b1832gmr | AR-B1832GMR
+ B 1832   | AR-B1832
+ B-1832   | 
+ 1832GMR  | AR-1832GMR
+ BB1832   | 
+ B183     | 
+ B1832GM  | 
+          | 
+(11 rows)
+
+SELECT pc FROM (VALUES ('AR-B1832GMR'), ('AR-1832'), ('AR-C1425'), ('AR-B1832'), ('AR-9000'), ('AR-A4190'), ('AR-B1832AAA'), ('AR-1000')) v(t), LATERAL (SELECT t::postal_code AS pc) x ORDER BY pc;
+     pc      
+-------------
+ AR-1000
+ AR-1832
+ AR-9000
+ AR-A4190
+ AR-B1832
+ AR-B1832AAA
+ AR-B1832GMR
+ AR-C1425
+(8 rows)
+
+SELECT outcode('AR-B1832GMR'::postal_code) AS outcode, outcode('AR-1832'::postal_code) AS none_to_drop;
+ outcode  | none_to_drop 
+----------+--------------
+ AR-B1832 | AR-1832
+(1 row)
+
+SELECT lower_bound('AR-B') AS lo, upper_bound('AR-B') AS hi;
+    lo    |    hi    
+----------+----------
+ AR-B0000 | AR-C0000
+(1 row)
+
+SELECT lower_bound('AR-B18') AS lo, upper_bound('AR-B18') AS hi;
+    lo    |    hi    
+----------+----------
+ AR-B1800 | AR-B1900
+(1 row)
+
+SELECT lower_bound('AR-B1832G') AS lo, upper_bound('AR-B1832G') AS hi;
+     lo      |     hi      
+-------------+-------------
+ AR-B1832GAA | AR-B1832HAA
+(1 row)
+
+SELECT lower_bound('AR-18') AS lo, upper_bound('AR-18') AS hi;
+   lo    |   hi    
+---------+---------
+ AR-1800 | AR-1900
+(1 row)
+
+SELECT lower_bound('AR-Z') AS lo, upper_bound('AR-Z') AS hi_is_the_end_of_the_country;
+    lo    | hi_is_the_end_of_the_country 
+----------+------------------------------
+ AR-Z0000 | AR-~
+(1 row)
+
+SELECT 'AR-B1832GMR'::postal_code % 'AR-B' AS yes, 'AR-1832'::postal_code % 'AR-B' AS no_digits_only,
+       'AR-B1832GMR'::postal_code % 'AR-B1832G' AS yes2, 'AR-C1425'::postal_code % 'AR-B' AS no_other_province;
+ yes | no_digits_only | yes2 | no_other_province 
+-----+----------------+------+-------------------
+ t   | f              | t    | f
+(1 row)
 
 -- ===== Built-in and user assignments =========================================
 -- What ships with the extension is separate from what users assign, so a dump

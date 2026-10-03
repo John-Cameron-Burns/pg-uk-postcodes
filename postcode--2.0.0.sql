@@ -940,7 +940,10 @@ INSERT INTO postal_code_templates (slot, template, builtin) VALUES
    (45, 'NNN[N]', true),
    (46, 'XNNNN', true),
    (47, 'NNNNN[ NNNNN]', true),
-   (48, 'NNNN[N]', true);
+   (48, 'NNNN[N]', true),
+   (49, 'NNNNNN[-NNN]', true),
+   (50, 'NNNN[-NN]', true),
+   (51, '[A]NNNN[AAA]', true);
 INSERT INTO postal_code_formats (name, description)
    SELECT 'template:' || template, 'Template ' || template FROM postal_code_templates WHERE builtin;
 INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
@@ -951,7 +954,7 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('AL', 'template:NNNN'),
    ('AM', 'template:NNNN'),
    ('AQ', 'template:AAAA NAA'),
-   ('AR', 'template:NNNN'),
+   ('AR', 'template:[A]NNNN[AAA]'),
    ('AS', 'US'),
    ('AT', 'template:NNNN'),
    ('AU', 'template:NNNN'),
@@ -972,7 +975,7 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('CH', 'template:NNNN'),
    ('CL', 'template:NNN-NNNN'),
    ('CN', 'template:NNNNNN'),
-   ('CO', 'template:NNNNNN'),
+   ('CO', 'template:NNNNNN[-NNN]'),
    ('CR', 'template:NNNNN[-NNNN]'),
    ('CU', 'template:NNNNN'),
    ('CV', 'template:NNNN'),
@@ -1057,7 +1060,7 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('MW', 'template:NNNNNN'),
    ('MX', 'template:NNNNN'),
    ('MY', 'template:NNNNN'),
-   ('MZ', 'template:NNNN'),
+   ('MZ', 'template:NNNN[-NN]'),
    ('NA', 'template:NNNNN'),
    ('NC', 'FR'),
    ('NE', 'template:NNNN'),
@@ -1147,7 +1150,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('AQ', 'British Antarctic Territory
 ', 'Wikipedia', 'a single code (BIQQ 1ZZ); the format accepts any code of that shape'),
    ('AR', 'Argentina
-', 'see note', 'NNNN, the minimum and the form GeoNames has; the 1999 ANNNNAAA form (CPA) and ANNNN are not accepted'),
+', 'see note', 'NNNN (the legacy code, and what GeoNames has), the province letter + 4 digits (B1832), or the full 8-character CPA (B1832GMR); all three are common in OpenStreetMap'),
    ('AS', 'American Samoa
 ', 'GeoNames data', NULL),
    ('AT', 'Austria
@@ -1224,7 +1227,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('CN', 'China
 ', 'GeoNames data', NULL),
    ('CO', 'Colombia
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'six digits, with the optional -NNN extension seen in a quarter of OpenStreetMap values (630001-025)'),
    ('CR', 'Costa Rica
 ', 'GeoNames data', 'five digits; Wikipedia also lists a NNNNN-NNNN street-level extension, taken as the optional tail'),
    ('CU', 'Cuba
@@ -1443,7 +1446,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('MY', 'Malaysia
 ', 'GeoNames data', NULL),
    ('MZ', 'Mozambique
-', 'Wikipedia', NULL),
+', 'Wikipedia', 'four digits, with the optional -NN extension seen in OpenStreetMap values (0101-01)'),
    ('NA', 'Namibia
 ', 'Wikipedia', NULL),
    ('NC', 'New Caledonia

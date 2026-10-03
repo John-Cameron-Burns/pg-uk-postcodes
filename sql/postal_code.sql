@@ -815,6 +815,42 @@ FROM (VALUES ('20000'), ('23251'), ('20014'), ('18038 79169'), ('71241'), ('4506
 SELECT outcode('AE-18038 79169'::postal_code) AS makani_head, outcode('AE-20000'::postal_code) AS abu_dhabi_is_its_own;
 SELECT iso2, format, basis, left(note, 50) AS note FROM postal_code_world WHERE iso2 IN ('AE', 'OM', 'QA');
 
+-- ===== Other scripts, and punctuation that is only punctuation ================
+-- Real data writes digits in other scripts, Unicode dashes and spaces, Japan's
+-- postal mark, a Brazilian CEP without its hyphen or with dots, a ZIP+4 without
+-- its hyphen. All of them are the same code re-spelled.
+SELECT cc, written, to_postal_code(written, cc) AS parsed
+FROM (VALUES ('IR', '۱۱۴۱۶۱۳۶۷۵'), ('IR', '۱۱۵۱۷-۱۳۵۱۳'), ('MM', '၀၇၀၉၁'), ('BD', '১২১৪'), ('IN', '४००००१'),
+             ('JP', '〒050−0083'), ('JP', '064‐0915'), ('JP', '〒 100–8111'), ('JP', '１００-８１１１'),
+             ('US', '９０２１０'), ('FR', '７５００８'), ('FR', '75008'), ('FR', '​75008'), ('LU', 'L − 2226'),
+             ('BR', '01139020'), ('BR', '06.026-170'), ('BR', '06026170'), ('BR', '01310-100'), ('BR', '0113902'),
+             ('US', '902101234'), ('US', '90210 1234'), ('US', '902100000'), ('US', '90210-1234'),
+             ('CO', '630001-025'), ('CO', '050010210'), ('CO', '630001'), ('MZ', '0101-01'), ('MZ', '0101')) v(cc, written);
+SELECT 'ir-۱۱۴۱۶۱۳۶۷۵'::postal_code AS a, 'JP-〒050−0083'::postal_code AS b;
+
+-- a GB fragment may end part-way through the unit: "M14 6Q" is a prefix of "M14 6QA".."M14 6QZ"
+SELECT lower_bound('GB-M14 6Q') AS lo, upper_bound('GB-M14 6Q') AS hi;
+SELECT lower_bound('GB-M14 6Z') AS lo, upper_bound('GB-M14 6Z') AS hi;
+SELECT 'GB-M14 6QA'::postal_code % 'GB-M14 6Q' AS yes, 'GB-M14 6RA'::postal_code % 'GB-M14 6Q' AS no,
+       'GB-M14 6QZ'::postal_code <@ postal_prefix('GB-M14 6Q') AS inside, 'GB-M14 6RA'::postal_code <@ postal_prefix('GB-M14 6Q') AS outside;
+SELECT count(*) AS units_in_m14_6q FROM (SELECT postal_code('M14 6' || chr(64 + a) || chr(64 + b), 'GB') AS pc FROM generate_series(1, 26) a, generate_series(1, 26) b) x
+WHERE pc <@ postal_prefix('GB-M14 6Q');
+
+-- ===== A leading letter: Argentina ============================================
+-- NNNN, the province letter + 4 digits, and the full 8-character CPA are all written.
+-- "[A]NNNN[AAA]": the leading letter is optional, so codes without it sort first.
+SELECT written, to_postal_code(written, 'AR') AS parsed
+FROM (VALUES ('1832'), ('B1832'), ('B1832GMR'), ('b1832gmr'), ('B 1832'), ('B-1832'), ('1832GMR'), ('BB1832'), ('B183'), ('B1832GM'), ('')) v(written);
+SELECT pc FROM (VALUES ('AR-B1832GMR'), ('AR-1832'), ('AR-C1425'), ('AR-B1832'), ('AR-9000'), ('AR-A4190'), ('AR-B1832AAA'), ('AR-1000')) v(t), LATERAL (SELECT t::postal_code AS pc) x ORDER BY pc;
+SELECT outcode('AR-B1832GMR'::postal_code) AS outcode, outcode('AR-1832'::postal_code) AS none_to_drop;
+SELECT lower_bound('AR-B') AS lo, upper_bound('AR-B') AS hi;
+SELECT lower_bound('AR-B18') AS lo, upper_bound('AR-B18') AS hi;
+SELECT lower_bound('AR-B1832G') AS lo, upper_bound('AR-B1832G') AS hi;
+SELECT lower_bound('AR-18') AS lo, upper_bound('AR-18') AS hi;
+SELECT lower_bound('AR-Z') AS lo, upper_bound('AR-Z') AS hi_is_the_end_of_the_country;
+SELECT 'AR-B1832GMR'::postal_code % 'AR-B' AS yes, 'AR-1832'::postal_code % 'AR-B' AS no_digits_only,
+       'AR-B1832GMR'::postal_code % 'AR-B1832G' AS yes2, 'AR-C1425'::postal_code % 'AR-B' AS no_other_province;
+
 -- ===== Built-in and user assignments =========================================
 -- What ships with the extension is separate from what users assign, so a dump
 -- can carry exactly the latter. The view shows both; a user row wins.

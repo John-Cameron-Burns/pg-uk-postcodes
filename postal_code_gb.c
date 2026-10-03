@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 #include <stdbool.h>
 
 #include "postcode.h"
@@ -157,19 +158,44 @@ static bool gb_next_walk (gbf *f) {
 
 static bool gb_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbounded) {
    if (!str) return false;
+
+   // A fragment may stop part-way through the unit: "M14 6Q" is a prefix of "M14 6QA".."M14 6QZ".
+   // The UK parser wants both unit letters, so peel the single letter off and set it afterwards. Only
+   // when a space separates the sector digit, otherwise "SW1A" (district 1A) would be misread.
+   char buf[16];
+   unsigned first_letter = 0;
+   size_t n = strlen(str);
+   if (n >= 3 && n < sizeof buf && str[n - 3] == ' ' && str[n - 2] >= '0' && str[n - 2] <= '9' &&
+       ((str[n - 1] >= 'A' && str[n - 1] <= 'Z') || (str[n - 1] >= 'a' && str[n - 1] <= 'z'))) {
+      memcpy(buf, str, n - 1);
+      buf[n - 1] = '\0';
+      first_letter = (unsigned) ((str[n - 1] & ~0x20) - 64);
+      str = buf;
+   }
+
    postcode b = postcode_parse(str, true);
    if (b == 0 || !valid_area(b)) return false;
+   if (first_letter) {
+      if (!GET_SECTOR(b) || GET_WALK1(b)) return false;
+      SET_WALK1(b, first_letter);
+   }
    if (GET_DISTRICT1(b) &&
        (!valid_district1(b) || !valid_district2(b) ||
         (GET_DISTRICT1(b) == 1 && GET_DISTRICT2(b) == 1))) return false;
    if (GET_SECTOR(b) && !valid_sector(b)) return false;
-   if (GET_WALK1(b) && !(valid_walk1(b) && valid_walk2(b))) return false;
+   // a unit may be only its first letter ("M14 6Q", a prefix of "M14 6QA"): walk2 unset
+   if (GET_WALK1(b) && !valid_walk1(b)) return false;
+   if (GET_WALK2(b) && !valid_walk2(b)) return false;
 
    gbf f = { GET_AREA(b), GET_DISTRICT1(b), GET_DISTRICT2(b),
              GET_SECTOR(b), GET_WALK1(b), GET_WALK2(b) };
    bool ok;
 
-   if (f.w1) {                                      // a full postcode
+   if (f.w1 && !f.w2) {                             // sector + the unit's first letter
+      f.w2 = 1;
+      *lo = gb_make(&f);
+      if (f.w1 < 26) { f.w1++; ok = true; } else ok = gb_next_sector(&f);
+   } else if (f.w1) {                               // a full postcode
       *lo = gb_make(&f);
       ok = gb_next_walk(&f);
    } else if (f.sec) {                              // outcode + sector

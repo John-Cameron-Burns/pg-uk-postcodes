@@ -80,8 +80,7 @@ static bool br_parse (const char *str, bool partial, uint64_t *out) {
    if (str[i] == '\0') { *out = res; return true; } // base only
    if (partial)        { *out = res; return true; } // ignore trailing suffix in a fragment
 
-   if (str[i] != '-') return false;
-   i++;
+   if (str[i] == '-') i++;               // "01310-100", and "01310100" as it is usually written
 
    uint32_t suffix = 0;
    int j = 0;
@@ -142,8 +141,8 @@ static bool br_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
       return true;
    }
 
-   if (k != 5 || str[k] != '-') return false;
-   const char *p = str + k + 1;
+   if (k != 5) return false;
+   const char *p = str + k + (str[k] == '-' ? 1 : 0);
    int m = 0;
    uint32_t a = 0;
    while (m < 3 && is_digit(p[m])) a = a * 10 + (uint32_t) (p[m++] - '0');

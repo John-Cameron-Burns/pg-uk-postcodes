@@ -61,8 +61,7 @@ static bool us_parse (const char *str, bool partial, uint64_t *out) {
    if (str[i] == '\0') { *out = res; return true; } // ZIP5 only, no +4
    if (partial)        { *out = res; return true; } // ignore trailing +4 in a fragment
 
-   if (str[i] != '-' && str[i] != ' ') return false;
-   i++;
+   if (str[i] == '-' || str[i] == ' ') i++;   // the separator is optional: "902101234" is a ZIP+4 too
 
    uint32_t plus4 = 0;
    int j = 0;
@@ -116,8 +115,8 @@ static bool us_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
       return true;
    }
 
-   if (k != 5 || (str[k] != '-' && str[k] != ' ')) return false;
-   const char *p = str + k + 1;
+   if (k != 5) return false;
+   const char *p = str + k + ((str[k] == '-' || str[k] == ' ') ? 1 : 0);
    int m = 0;
    uint32_t a = 0;
    while (m < 4 && is_digit(p[m])) a = a * 10 + (uint32_t) (p[m++] - '0');

@@ -309,10 +309,20 @@ parses wins:
   Man codes start with their country's letters, but they are tried as written first,
   so `IM1 1AA` is unaffected and `IM1 SPT` is still rejected;
 * spaces and hyphens swapped -- `1050 010` for `1050-010`, `L 1820` for `L-1820`;
-* spaces dropped -- `06 830`, `19 801`, `K1A0B1`.
+* spaces dropped -- `06 830`, `19 801`, `K1A0B1` -- or dots, as in the Brazilian
+  `06.026-170`.
 
-Spacing at the ends, doubled spaces and spaces next to a hyphen are tidied before any
-of that (`" us - 90210 "`). These only re-spell the same characters, so they can
+Beyond that, a Brazilian CEP and a US ZIP+4 may be written without their hyphen
+(`01139020`, `902101234`), which is how they usually are.
+
+Before any of that the text is tidied: spacing at the ends, doubled spaces and
+spaces next to a hyphen (`" us - 90210 "`), and, in a UTF-8 or SQL_ASCII database,
+other scripts' spelling of the same characters: digits of other scripts become 0-9
+(Persian `۱۱۴۱۶`, Arabic-Indic, Bengali `১২১৪`, Burmese `၀၇၀၉၁`, Devanagari `४००००१`,
+Thai, full-width), the Unicode hyphens and minus signs become `-` (`050−0083`,
+`064‐0915`), no-break and other Unicode spaces become a space, full-width letters
+become ASCII, and zero-width characters and Japan's postal mark `〒` are dropped.
+These only re-spell the same characters, so they can
 recognise a code but never turn something that isn't one into one: a value that parsed
 before parses to the same value now. Text *around* a code is a different job and is
 not attempted -- `DE 19801`, `NSW 2000`, `ON L6M 0A8`, `1200-445 LISBON`, `CAP 00144`,

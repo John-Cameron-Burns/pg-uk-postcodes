@@ -27,6 +27,8 @@
 
 #include "postal_code.h"
 #include "postal_code_fmt.h"
+#include <mb/pg_wchar.h>
+
 #include "postal_code_country.h"
 #include "postal_code_tpl.h"
 
@@ -173,10 +175,11 @@ static inline char ascii_upper (char c) { return (c >= 'a' && c <= 'z') ? (char)
 //     tried as written first, so Jersey, Guernsey and the Isle of Man are safe);
 //   - each of those with spaces and hyphens swapped ("1050 010" for "1050-010",
 //     "L 1820" for "L-1820", "SW1A-1AA");
-//   - or with the spaces dropped altogether ("06 830", "19 801", "K1A0B1").
+//   - or with the spaces dropped altogether ("06 830", "19 801", "K1A0B1"), or
+//     the dots ("06.026-170", the way a CEP is often punctuated).
 // They only ever re-spell the same characters, so a variant can't turn
 // something that is not a code into one, only recognise a spelling that is.
-#define MAX_FORMS 8
+#define MAX_FORMS 14
 
 static int variant_forms (const char *text, const char iso2[2], const char *forms[MAX_FORMS]) {
    int n = 0;
@@ -198,8 +201,12 @@ static int variant_forms (const char *text, const char iso2[2], const char *form
       for (char *c = hyphened; *c; c++) if (*c == ' ') *c = '-';
       for (char *c = spaced; *c; c++) if (*c == '-') *c = ' ';
 
-      const char *cand[4] = { bases[i], hyphened, spaced, packed };
-      for (int j = 0; j < 4; j++) {
+      char *dotless = palloc(strlen(bases[i]) + 1);
+      k = 0;
+      for (const char *c = bases[i]; *c; c++) if (*c != '.') dotless[k++] = *c;
+      dotless[k] = '\0';
+      const char *cand[5] = { bases[i], hyphened, spaced, packed, dotless };
+      for (int j = 0; j < 5; j++) {
          bool seen = false;
          for (int m = 0; m < n; m++) if (strcmp(forms[m], cand[j]) == 0) seen = true;
          if (!seen && n < MAX_FORMS) forms[n++] = cand[j];
@@ -290,21 +297,69 @@ static inline postal_code pc_assemble (const char iso2[2], pc_format fmt, uint64
 }
 
 
-// Real feeds are untidy in one way this can fix without guessing: spacing.
-// Trims the ends, collapses any run of whitespace to one space, and drops a
-// space next to a hyphen, so " us - 90210 ", "L - 2226" and "SW1A  1AA" mean
-// what they obviously mean. Nothing else is touched: no characters are added,
-// removed or changed, so what this accepts is still exactly the format's own
-// grammar. Returns a copy.
+// Real feeds are untidy in ways this can fix without guessing: spacing, and
+// characters that are another script's spelling of the same thing. Trims the
+// ends, collapses any run of whitespace to one space, drops a space next to a
+// hyphen, and (in a UTF-8 or SQL_ASCII database) re-spells:
+//   - decimal digits of other scripts as 0-9 (Persian "۱۲۳", Arabic-Indic,
+//     Bengali, Burmese, Devanagari, Thai ... and full-width);
+//   - the Unicode hyphens and minus signs (U+2010..2015, U+2212, ...) as "-";
+//   - no-break and other Unicode spaces as a space; full-width letters as ASCII;
+//   - and drops zero-width characters and Japan's postal mark 〒 (U+3012).
+// So " us - 90210 ", "L - 2226", "SW1A  1AA", "〒050−0083" and "۱۲۳۴۵" mean what
+// they obviously mean. Nothing else is touched, so what is accepted is still
+// exactly the format's own grammar. Returns a copy.
+static const uint32_t digit_zeros[] = {
+   0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6, 0x0D66,
+   0x0DE6, 0x0E50, 0x0ED0, 0x0F20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0, 0x1A80, 0x1A90,
+   0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0, 0xAA50, 0xABF0, 0xFF10,
+};
+
+// What a non-ASCII character stands for: a digit or letter or '-' or ' ' (returned), 0 for "drop it",
+// or -1 for "leave it alone".
+static int respell (uint32_t cp) {
+   for (size_t i = 0; i < sizeof digit_zeros / sizeof *digit_zeros; i++)
+      if (cp >= digit_zeros[i] && cp < digit_zeros[i] + 10) return (int) ('0' + (cp - digit_zeros[i]));
+   if ((cp >= 0x2010 && cp <= 0x2015) || cp == 0x2212 || cp == 0xFE58 || cp == 0xFE63 || cp == 0xFF0D || cp == 0x2043) return '-';
+   if (cp == 0x00A0 || cp == 0x1680 || (cp >= 0x2000 && cp <= 0x200A) || cp == 0x202F || cp == 0x205F || cp == 0x3000) return ' ';
+   if (cp >= 0xFF21 && cp <= 0xFF3A) return (int) ('A' + (cp - 0xFF21));
+   if (cp >= 0xFF41 && cp <= 0xFF5A) return (int) ('a' + (cp - 0xFF41));
+   if ((cp >= 0x200B && cp <= 0x200F) || cp == 0xFEFF || cp == 0x2060 || cp == 0x3012) return 0;
+   return -1;
+}
+
 static char *tidy (const char *s) {
-   char *out = palloc(strlen(s) + 1);
+   int enc = GetDatabaseEncoding();
+   bool unicode = enc == PG_UTF8 || enc == PG_SQL_ASCII;
+   char *out = palloc(strlen(s) + 1);     // a respelling is never longer than what it replaces
    size_t n = 0;
    bool space = false;
-   for (; *s; s++) {
-      if (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') { space = true; continue; }
-      if (space && n > 0 && *s != '-' && out[n - 1] != '-') out[n++] = ' ';
-      space = false;
-      out[n++] = *s;
+   while (*s) {
+      unsigned char b = (unsigned char) *s;
+      int c = b;
+      size_t len = 1;
+      if (b >= 0xC2 && unicode) {                 // a UTF-8 lead byte: decode it if it is well formed
+         len = b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : 2;
+         uint32_t cp = b & (0xFF >> (len + 1));
+         size_t k = 1;
+         for (; k < len && ((unsigned char) s[k] & 0xC0) == 0x80; k++) cp = (cp << 6) | ((unsigned char) s[k] & 0x3F);
+         if (k == len) {
+            int r = respell(cp);
+            if (r == 0) { s += len; continue; }
+            if (r > 0) c = r; else len = 1;
+         } else len = 1;
+      }
+      if (len > 1 || c < 0x80) {                   // a respelled or plain ASCII character
+         if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { space = true; s += len; continue; }
+         if (space && n > 0 && c != '-' && out[n - 1] != '-') out[n++] = ' ';
+         space = false;
+         out[n++] = (char) c;
+         s += len;
+      } else {                                      // any other byte is passed through
+         if (space && n > 0 && out[n - 1] != '-') out[n++] = ' ';
+         space = false;
+         out[n++] = *s++;
+      }
    }
    out[n] = '\0';
    return out;

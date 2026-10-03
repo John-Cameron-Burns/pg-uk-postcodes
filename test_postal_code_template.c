@@ -205,6 +205,7 @@ static void test_compile (void) {
       "N", "NN", "NNN NN", "NN-NNN", "NNNN AA", "AAAA NNNN", "X", "XXXXXXXXX", "NNNNNNNNNNNNNN",
       "NNNNN[-NNNN]", "ANA[ NAN]", "NNNNNNN[NNNNNNN]", "NNN[NN]", "XXX[ XXX]", "N[ N]",
       "CCNNNN", "CC NNNN", "CC-NNNN", "CCN-NNNN", "CCNN NNN", "CCNNN[N]",
+      "[A]NNNN", "[A]NNNN[AAA]", "[AA]NN", "[A]N-NN", "[A]NNNNN[ NNN]",
    };
    for (size_t i = 0; i < sizeof good / sizeof *good; i++) {
       bool ok = pc_template_compile(good[i], &t, err, sizeof err);
@@ -217,6 +218,7 @@ static void test_compile (void) {
       "NN]", "NN[N][N]", "NN[N]N", "NN[NN]]", "NN[N[N]]", "XXXXXXXXXX", "NNNNNNNNNNNNNNN", "NNNNNNNN[NNNNNNN]",
       "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN", "NN[N ]",
       "CC", "CC ", "CC-", "CC[N]", "NCCN", "CNNNN", "CCC", "CC  NN",
+      "[A]", "[N]NN", "[A]ANN", "[A]-NN", "[A", "[]NN", "[A][A]NN", "A[A]NN", "CC[A]NN", "[AAAAAAAAA]N", "[X]NN", "[A]NN]", "[A] NN",
    };
    for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) {
       bool ok = pc_template_compile(bad[i], &t, err, sizeof err);
@@ -290,6 +292,15 @@ int main (void) {
    test_template("NNNNNNNNNN", 99991);
    test_template("XXXXXXXXX", 1000000007ull);
    test_template("NNNNNNN[NNNNNNN]", 100000007ull);
+   // an optional leading group of letters (Argentina: 1832, B1832, B1832GMR)
+   test_template("[A]N", 0);
+   test_template("[A]NN", 0);
+   test_template("[AA]N", 0);
+   test_template("[A]N[A]", 0);
+   test_template("[A]NN[AA]", 0);
+   test_template("[A]N-NN", 0);
+   test_template("[A]NNNN", 0);
+   test_template("[A]NNNN[AAA]", 4999999ull);
 
    test_agrees_with_compiled();
 
