@@ -99,9 +99,17 @@ FROM r GROUP BY cc HAVING count(*) FILTER (WHERE a <> b) > 0 ORDER BY 3 DESC LIM
 CREATE TEMP TABLE pt AS SELECT cc, pc, substr(pc::text, 4) AS nat FROM parsed;
 CREATE INDEX ON pt (pc);
 ANALYZE pt;     -- temp tables are never analysed by autovacuum; without this the join below is hopeless
-CREATE TEMP TABLE pref AS
+-- The UK format reads GB-AB1 as district 1 and GB-B as area B, not as "every code whose text starts with
+-- that" (AB1 is not a district at all; AB10..AB19 are), so a plain text prefix is the wrong oracle for it.
+-- For countries on that format the check is structural: every complete outcode (counted by outcode()),
+-- and every fragment containing a space (sector and unit level), where text and structure agree.
+CREATE TEMP TABLE ukfmt AS SELECT iso2 FROM postal_code_world WHERE format = 'GB';
 -- (a fragment's trailing space is insignificant -- text is tidied -- so prefixes ending in a space are not distinct fragments)
-SELECT DISTINCT cc, left(nat, n) AS frag FROM pt, generate_series(1, 6) n WHERE length(nat) >= n AND left(nat, n) !~ ' $';
+CREATE TEMP TABLE pref AS
+SELECT DISTINCT cc, left(nat, n) AS frag FROM pt, generate_series(1, 6) n
+WHERE length(nat) >= n AND left(nat, n) !~ ' $' AND (cc NOT IN (SELECT iso2 FROM ukfmt) OR left(nat, n) ~ ' ')
+UNION
+SELECT DISTINCT cc, substr(outcode(pc)::text, 4) FROM parsed WHERE cc IN (SELECT iso2 FROM ukfmt) AND outcode(pc) IS NOT NULL;
 SELECT count(*) AS prefixes FROM pref;
 -- a fragment the parser does not take gives NULL (to_postal_prefix), and is counted, not fatal
 CREATE TEMP TABLE bounds AS
@@ -114,7 +122,11 @@ ANALYZE bounds;
 CREATE TEMP TABLE by_range AS
 SELECT b.cc, b.frag, count(t.pc) AS c FROM bounds b LEFT JOIN pt t ON t.pc >= b.lo AND t.pc < b.hi GROUP BY b.cc, b.frag;   -- the range alone is selective: countries lie end to end in the value space
 CREATE TEMP TABLE by_text AS
-SELECT cc, left(nat, n) AS frag, count(*) AS c FROM pt, generate_series(1, 6) n WHERE length(nat) >= n AND left(nat, n) !~ ' $' GROUP BY 1, 2;
+SELECT cc, left(nat, n) AS frag, count(*) AS c FROM pt, generate_series(1, 6) n
+WHERE length(nat) >= n AND left(nat, n) !~ ' $' AND (cc NOT IN (SELECT iso2 FROM ukfmt) OR left(nat, n) ~ ' ')
+GROUP BY 1, 2
+UNION ALL
+SELECT cc, substr(outcode(pc)::text, 4), count(*) FROM parsed WHERE cc IN (SELECT iso2 FROM ukfmt) AND outcode(pc) IS NOT NULL GROUP BY 1, 2;
 SELECT count(*) AS prefixes_checked, count(*) FILTER (WHERE r.c IS DISTINCT FROM x.c) AS mismatches
 FROM by_range r JOIN by_text x USING (cc, frag);
 SELECT cc, count(*) AS mismatching_prefixes, min(frag) AS example FROM by_range r JOIN by_text x USING (cc, frag) WHERE r.c IS DISTINCT FROM x.c GROUP BY cc ORDER BY 2 DESC;

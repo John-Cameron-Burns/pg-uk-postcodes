@@ -602,6 +602,14 @@ provided the same as for `postcode`. Partial matching is the range support
 and the `%` operator described above.
 
 
+Validation
+----------
+The type was tested on about 117 million real postcodes from OpenStreetMap, GeoNames and Companies House
+before release: 99.84% of OpenStreetMap's `addr:postcode` values parse, every parsed code round-trips
+through text and binary, order and prefix ranges agree with plain text, and an upgrade from 1.3.5 and a
+dump and restore were checked on 829,000 real UK postcodes. See `VALIDATION.md` for the method, the bugs
+it found and the gaps that remain.
+
 Credits
 -------
 Developed up to 1.3.0 by Dave Green at patchsoft.

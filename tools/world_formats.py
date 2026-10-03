@@ -71,7 +71,7 @@ W = {
  'BA': ('NNNNN','W'),  'AQ': (UKT,'W'),      'VG': ('CCNNNN','W'), 'BN': ('AANNNN','W'),    'KH': ('NNNNNN','W'),
  'CV': ('NNNN','W'),   'KY': ('CCN-NNNN','W'), 'CU': ('NNNNN','W'), 'SV': ('NNNN','W'),      'EG': ('NNNNN[NN]','x'),
  'SZ': ('ANNN','W'),   'ET': ('NNNN','W'),   'GE': ('NNNN','W'),   'GH': ('AXNNN[NN]','W'),  'GR': ('NNN NN','W'),
- 'GN': ('NNN','W'),    'GW': ('NNNN','W'),   'IR': ('NNNNN-NNNNN','W'), 'IQ': ('NNNNN','W'),  'IL': ('NNNNN[NN]','x'),
+ 'GN': ('NNN','W'),    'GW': ('NNNN','W'),   'IR': ('NNNNN[-NNNNN]','W'), 'IQ': ('NNNNN','W'),  'IL': ('NNNNN[NN]','x'),
  'JM': ('NN','W'),     'JO': ('NNNNN','W'),  'KZ': ('NNNNNN','W'), 'XK': ('NNNNN','W'),      'KW': ('NNNNN','W'),
  'KG': ('NNNNNN','W'), 'LA': ('NNNNN','W'),  'LB': ('NNNN[ NNNN]','W'), 'LS': ('NNN','W'),    'LR': ('NNNN','W'),
  'MG': ('NNN','W'),    'MV': ('NNNNN','W'),  'MU': ('XNNNN','W'),  'MN': ('NNNNN','W'),       'ME': ('NNNNN','W'),
@@ -106,6 +106,7 @@ NOTES = {
  'IL': '7 digits since 2013; 5-digit codes are still widely used; both accepted',
  'AE': 'no postal code system, but two location schemes: Abu Dhabi has 5-digit area codes (20000 central Abu Dhabi, 23251 Khalifa City, 20014 Yas Island), and Dubai numbers every building with a 10-digit Makani code written NNNNN NNNNN (all 178,171 GeoNames rows are Dubai). One format holds both, so any 5 digits pass. Sharjah\'s PCS is not modelled; most UAE addresses give a PO Box, which is rejected',
  'UM': 'US ZIP (96898)',
+ 'IR': 'the 10-digit code, whose first five digits are a locality block; OpenStreetMap\'s mapped postcode areas use those five alone, so the second half is optional',
  'CO': 'six digits, with the optional -NNN extension seen in a quarter of OpenStreetMap values (630001-025)',
  'MZ': 'four digits, with the optional -NN extension seen in OpenStreetMap values (0101-01)',
  'MU': 'Wikipedia lists NNNNN and RNNNN (Rodrigues); the first character may be any letter or digit',
@@ -146,7 +147,7 @@ EXTRA_NAMES = {'BV': 'Bouvet Island', 'EH': 'Western Sahara'}
 # Template slots are permanent, so they are never derived from sorting: this is the order they were
 # shipped in. A new template is APPENDED here (the generator refuses a template that is missing, so
 # adding a country with a new shape forces this edit).
-SLOT_ORDER = ['AA NNNNN', 'AA XX', 'AAA NNNN', 'AAAA NAA', 'AAANN', 'AAA[ NNNN]', 'AANNNN', 'ANNN', 'AXNNN[NN]', 'CC NNNN', 'CCN-NNNN', 'CCNN NNN', 'CCNNN', 'CCNNNN', 'CCNNNNN', 'NN', 'NN-NNN', 'NNN', 'NNN NN', 'NNN-NNNN', 'NNNN', 'NNNNN', 'NNNNN-NNNNN', 'NNNNNN', 'NNNNN[-NNNN]', 'NNNNN[NN]', 'NNNNN[N]', 'NNNN[ AA]', 'NNNN[ NNNN]', 'NNNN[-A]', 'NNNN[-NNN]', 'NNNN[NN]', 'NNN[-NNN]', 'NNN[N]', 'XNNNN', 'NNNNN[ NNNNN]', 'NNNN[N]', 'NNNNNN[-NNN]', 'NNNN[-NN]', '[A]NNNN[AAA]']
+SLOT_ORDER = ['AA NNNNN', 'AA XX', 'AAA NNNN', 'AAAA NAA', 'AAANN', 'AAA[ NNNN]', 'AANNNN', 'ANNN', 'AXNNN[NN]', 'CC NNNN', 'CCN-NNNN', 'CCNN NNN', 'CCNNN', 'CCNNNN', 'CCNNNNN', 'NN', 'NN-NNN', 'NNN', 'NNN NN', 'NNN-NNNN', 'NNNN', 'NNNNN', 'NNNNN-NNNNN', 'NNNNNN', 'NNNNN[-NNNN]', 'NNNNN[NN]', 'NNNNN[N]', 'NNNN[ AA]', 'NNNN[ NNNN]', 'NNNN[-A]', 'NNNN[-NNN]', 'NNNN[NN]', 'NNN[-NNN]', 'NNN[N]', 'XNNNN', 'NNNNN[ NNNNN]', 'NNNN[N]', 'NNNNNN[-NNN]', 'NNNN[-NN]', '[A]NNNN[AAA]', 'NNNNN[-NNNNN]']
 
 def sql_text(names):
     compiled = set('US CA FR BR CZ LU GB IE'.split())

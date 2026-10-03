@@ -1721,7 +1721,7 @@ SELECT count(add_country_template('XA', t)) AS filled FROM (
 ) f;
  filled 
 --------
-     10
+      9
 (1 row)
 
 SELECT count(*) AS slots, min(slot), max(slot) FROM postal_code_templates;

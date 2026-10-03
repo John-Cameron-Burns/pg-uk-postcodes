@@ -944,7 +944,8 @@ INSERT INTO postal_code_templates (slot, template, builtin) VALUES
    (48, 'NNNN[N]', true),
    (49, 'NNNNNN[-NNN]', true),
    (50, 'NNNN[-NN]', true),
-   (51, '[A]NNNN[AAA]', true);
+   (51, '[A]NNNN[AAA]', true),
+   (52, 'NNNNN[-NNNNN]', true);
 INSERT INTO postal_code_formats (name, description)
    SELECT 'template:' || template, 'Template ' || template FROM postal_code_templates WHERE builtin;
 UPDATE postal_code_formats SET builtin = true;          -- everything present at install is shipped
@@ -1019,7 +1020,7 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('IN', 'template:NNNNNN'),
    ('IO', 'template:AAAA NAA'),
    ('IQ', 'template:NNNNN'),
-   ('IR', 'template:NNNNN-NNNNN'),
+   ('IR', 'template:NNNNN[-NNNNN]'),
    ('IS', 'template:NNN'),
    ('IT', 'template:NNNNN'),
    ('JM', 'template:NN'),
@@ -1346,7 +1347,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('IQ', 'Iraq
 ', 'Wikipedia', NULL),
    ('IR', 'Iran
-', 'Wikipedia', NULL),
+', 'Wikipedia', 'the 10-digit code, whose first five digits are a locality block; OpenStreetMap''s mapped postcode areas use those five alone, so the second half is optional'),
    ('IS', 'Iceland
 ', 'GeoNames data', NULL),
    ('IT', 'Italy
