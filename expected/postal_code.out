@@ -2169,6 +2169,20 @@ SELECT 'ir-۱۱۴۱۶۱۳۶۷۵'::postal_code AS a, 'JP-〒050−0083'::postal_c
  IR-11416-13675 | JP-050-0083
 (1 row)
 
+-- Malta's postcodes are officially ASCII, but are often written with the native letters
+SELECT written, to_postal_code(written, 'MT') AS parsed FROM (VALUES ('ŻTN 3000'), ('MLĦ 2777'), ('żtn 3000'), ('ZTN 3000'), ('ĊSP 1000'), ('ĠRB 1000'), ('ĠRB 100'), ('MLH')) v(written);
+  written  |   parsed    
+-----------+-------------
+ ŻTN 3000 | MT-ZTN 3000
+ MLĦ 2777 | MT-MLH 2777
+ żtn 3000 | MT-ZTN 3000
+ ZTN 3000  | MT-ZTN 3000
+ ĊSP 1000 | MT-CSP 1000
+ ĠRB 1000 | MT-GRB 1000
+ ĠRB 100  | 
+ MLH       | MT-MLH
+(8 rows)
+
 -- a GB fragment may end part-way through the unit: "M14 6Q" is a prefix of "M14 6QA".."M14 6QZ"
 SELECT lower_bound('GB-M14 6Q') AS lo, upper_bound('GB-M14 6Q') AS hi;
      lo     |     hi     

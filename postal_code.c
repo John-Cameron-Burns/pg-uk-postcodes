@@ -304,7 +304,7 @@ static inline postal_code pc_assemble (const char iso2[2], pc_format fmt, uint64
 //   - decimal digits of other scripts as 0-9 (Persian "۱۲۳", Arabic-Indic,
 //     Bengali, Burmese, Devanagari, Thai ... and full-width);
 //   - the Unicode hyphens and minus signs (U+2010..2015, U+2212, ...) as "-";
-//   - no-break and other Unicode spaces as a space; full-width letters as ASCII;
+//   - no-break and other Unicode spaces as a space; full-width letters as ASCII; Malta's Ċ Ġ Ħ Ż as C G H Z;
 //   - and drops zero-width characters and Japan's postal mark 〒 (U+3012).
 // So " us - 90210 ", "L - 2226", "SW1A  1AA", "〒050−0083" and "۱۲۳۴۵" mean what
 // they obviously mean. Nothing else is touched, so what is accepted is still
@@ -322,6 +322,10 @@ static int respell (uint32_t cp) {
       if (cp >= digit_zeros[i] && cp < digit_zeros[i] + 10) return (int) ('0' + (cp - digit_zeros[i]));
    if ((cp >= 0x2010 && cp <= 0x2015) || cp == 0x2212 || cp == 0xFE58 || cp == 0xFE63 || cp == 0xFF0D || cp == 0x2043) return '-';
    if (cp == 0x00A0 || cp == 0x1680 || (cp >= 0x2000 && cp <= 0x200A) || cp == 0x202F || cp == 0x205F || cp == 0x3000) return ' ';
+   // Malta's four extra letters: its postcodes are officially the ASCII letters (ZTN 3000), mapped as
+   // Żejtun, Mellieħa ... and no other country's postcode contains them
+   if (cp == 0x010A || cp == 0x0120 || cp == 0x0126 || cp == 0x017B) return cp == 0x010A ? 'C' : cp == 0x0120 ? 'G' : cp == 0x0126 ? 'H' : 'Z';
+   if (cp == 0x010B || cp == 0x0121 || cp == 0x0127 || cp == 0x017C) return cp == 0x010B ? 'c' : cp == 0x0121 ? 'g' : cp == 0x0127 ? 'h' : 'z';
    if (cp >= 0xFF21 && cp <= 0xFF3A) return (int) ('A' + (cp - 0xFF21));
    if (cp >= 0xFF41 && cp <= 0xFF5A) return (int) ('a' + (cp - 0xFF41));
    if ((cp >= 0x200B && cp <= 0x200F) || cp == 0xFEFF || cp == 0x2060 || cp == 0x3012) return 0;

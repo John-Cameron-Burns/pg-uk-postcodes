@@ -827,6 +827,8 @@ FROM (VALUES ('IR', '۱۱۴۱۶۱۳۶۷۵'), ('IR', '۱۱۵۱۷-۱۳۵۱۳'), ('
              ('US', '902101234'), ('US', '90210 1234'), ('US', '902100000'), ('US', '90210-1234'),
              ('CO', '630001-025'), ('CO', '050010210'), ('CO', '630001'), ('MZ', '0101-01'), ('MZ', '0101')) v(cc, written);
 SELECT 'ir-۱۱۴۱۶۱۳۶۷۵'::postal_code AS a, 'JP-〒050−0083'::postal_code AS b;
+-- Malta's postcodes are officially ASCII, but are often written with the native letters
+SELECT written, to_postal_code(written, 'MT') AS parsed FROM (VALUES ('ŻTN 3000'), ('MLĦ 2777'), ('żtn 3000'), ('ZTN 3000'), ('ĊSP 1000'), ('ĠRB 1000'), ('ĠRB 100'), ('MLH')) v(written);
 
 -- a GB fragment may end part-way through the unit: "M14 6Q" is a prefix of "M14 6QA".."M14 6QZ"
 SELECT lower_bound('GB-M14 6Q') AS lo, upper_bound('GB-M14 6Q') AS hi;
