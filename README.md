@@ -463,7 +463,7 @@ new `postal_code_fmt.h` tag) and a new extension version.
 ### Every country in the world
 
 The extension ships with a format for every country and territory that has a postal
-code system: 193 of the 250 ISO 3166-1 entries (the other 57 have no postal codes,
+code system: 194 of the 250 ISO 3166-1 entries (the other 56 have no postal codes,
 and the table says so). Eight formats are compiled (US, CA, FR, BR, CZ, LU, GB, IE);
 the rest are templates (below). The formats come from the real GeoNames data
 (`"@GEONAMES".world`, 120 countries and 1.65 million codes, every one of which loads
@@ -474,6 +474,14 @@ postal codes. Territories that use another country's system share its format
     SELECT * FROM postal_code_world;                      -- every country, its format, where it came from
     SELECT * FROM postal_code_world WHERE basis = 'no postal codes';
     SELECT * FROM postal_code_world WHERE note IS NOT NULL;   -- the judgement calls
+
+The UAE has no postal codes, but two schemes work like them: Abu Dhabi's 5-digit
+district codes (`20000`, `23251`) and Dubai's Makani numbers, a 10-digit code for each
+building written `NNNNN NNNNN` (all that GeoNames holds for the UAE). One format,
+`NNNNN[ NNNNN]`, holds both, so any five digits pass, and the `postal_code_world` note
+says what it is. Sharjah's PCS is not modelled, because there is nothing here yet to
+say what its codes look like; PO Box numbers, which is what most UAE addresses give, are
+not codes and are rejected.
 
 Two things to know. A template can't fix digits, so French Guiana's `973NN` is just
 the French five digits; where the real rule is narrower than the format, the format

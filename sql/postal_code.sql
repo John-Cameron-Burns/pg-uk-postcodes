@@ -800,6 +800,21 @@ FROM (VALUES ('US', 'DE 19801'), ('US', 'DELAWARE 19803'), ('AU', 'NSW 2000'), (
 SELECT lower_bound('US-US 90') AS a, lower_bound('LU-L 14') AS b, upper_bound('PT-1050 0') AS c;
 SELECT 'US-90210'::postal_code % 'US-US90' AS yes, 'US-90210'::postal_code % 'US-9 02' AS also_yes, 'US-90210'::postal_code % 'US-91' AS no;
 
+-- ===== The UAE =================================================================
+-- The UAE has no postal codes, but two schemes work like them. Abu Dhabi assigns
+-- 5-digit codes by district (20000 central Abu Dhabi, 23251 Khalifa City, 20014 Yas
+-- Island). Dubai numbers every building with a 10-digit Makani code, written
+-- NNNNN NNNNN, which is what GeoNames holds for the UAE. One format, NNNNN with an
+-- optional second block, holds both; the world view says what it is. PO Box numbers,
+-- which is what UAE addresses mostly give, are not codes and are rejected.
+SELECT postal_code('20000', 'AE') AS abu_dhabi, postal_code('18038 79169', 'AE') AS dubai_makani,
+       postal_code('1803879169', 'AE') AS b, 'AE-18038-79169'::postal_code AS c;
+SELECT written, to_postal_code(written, 'AE') AS parsed
+FROM (VALUES ('20000'), ('23251'), ('20014'), ('18038 79169'), ('71241'), ('450676'), ('PO BOX 413383'),
+             ('P.O. BOX 98444'), ('1204'), ('00000'), ('18038 7916')) v(written);
+SELECT outcode('AE-18038 79169'::postal_code) AS makani_head, outcode('AE-20000'::postal_code) AS abu_dhabi_is_its_own;
+SELECT iso2, format, basis, left(note, 50) AS note FROM postal_code_world WHERE iso2 IN ('AE', 'OM', 'QA');
+
 -- ===== Built-in and user assignments =========================================
 -- What ships with the extension is separate from what users assign, so a dump
 -- can carry exactly the latter. The view shows both; a user row wins.

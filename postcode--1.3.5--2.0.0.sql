@@ -568,11 +568,13 @@ INSERT INTO postal_code_templates (slot, template, builtin) VALUES
    (43, 'NNNN[NN]', true),
    (44, 'NNN[-NNN]', true),
    (45, 'NNN[N]', true),
-   (46, 'XNNNN', true);
+   (46, 'XNNNN', true),
+   (47, 'NNNNN[ NNNNN]', true);
 INSERT INTO postal_code_formats (name, description)
    SELECT 'template:' || template, 'Template ' || template FROM postal_code_templates WHERE builtin;
 INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('AD', 'template:CCNNN'),
+   ('AE', 'template:NNNNN[ NNNNN]'),
    ('AF', 'template:NNNN'),
    ('AI', 'template:NNNN'),
    ('AL', 'template:NNNN'),
@@ -758,7 +760,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('AD', 'Andorra
 ', 'GeoNames data', NULL),
    ('AE', 'United Arab Emirates
-', 'no postal codes', 'no postal code system; the "postal codes" in GeoNames are coordinate-derived pairs, not codes'),
+', 'see note', 'no postal code system, but two location schemes: Abu Dhabi has 5-digit area codes (20000 central Abu Dhabi, 23251 Khalifa City, 20014 Yas Island), and Dubai numbers every building with a 10-digit Makani code written NNNNN NNNNN (all 178,171 GeoNames rows are Dubai). One format holds both, so any 5 digits pass. Sharjah''s PCS is not modelled; most UAE addresses give a PO Box, which is rejected'),
    ('AF', 'Afghanistan
 ', 'Wikipedia', NULL),
    ('AG', 'Antigua and Barbuda
