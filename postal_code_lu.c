@@ -38,7 +38,7 @@ static bool lu_parse (const char *str, bool partial, uint64_t *out) {
    if (!str) return false;
 
    const char *s = str;
-   if ((s[0] == 'L' || s[0] == 'l') && s[1] == '-') s += 2;
+   if (s[0] == 'L' || s[0] == 'l') { s++; if (*s == '-') s++; }   // "L-1311", and "L1311" as it is often written
 
    uint32_t value = 0;
    int i = 0;
@@ -72,7 +72,7 @@ static bool lu_valid (uint64_t payload) {
 static bool lu_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbounded) {
    if (!str) return false;
    const char *s = str;
-   if ((s[0] == 'L' || s[0] == 'l') && s[1] == '-') s += 2;
+   if (s[0] == 'L' || s[0] == 'l') { s++; if (*s == '-') s++; }   // "L-1311", and "L1311" as it is often written
    int k = 0;
    uint32_t p = 0;
    while (k < 4 && is_digit(s[k])) p = p * 10 + (uint32_t) (s[k++] - '0');

@@ -770,6 +770,36 @@ SELECT postal_code(' 90210 ', ' us ');
 SELECT 'U S-90210'::postal_code;
 SELECT 'US-90 210'::postal_code;
 
+-- ===== Obvious variants ======================================================
+-- What a format accepts as written is taken as written. Only if that fails
+-- are these tried: the country's own letters dropped ("MH96960"), spaces and
+-- hyphens swapped ("1050 010"), spaces dropped ("06 830"). They re-spell the
+-- same characters, so they recognise a spelling but cannot make a non-code one.
+SELECT cc, written, to_postal_code(written, cc) AS parsed
+FROM (VALUES ('MH', 'MH96960'), ('MH', 'MH 96960'), ('MH', 'mh-96960'), ('AI', 'AI2640'), ('AI', 'AI 2640'),
+             ('US', 'US90210'), ('US', 'US 90210-1234'), ('CA', 'CA K1A 0B1'), ('FR', 'FR 75008'),
+             ('LU', 'L1471'), ('LU', 'L 1820'), ('LU', 'L-1 452'), ('LU', 'LU-L-1471'), ('LU', 'LU1471'),
+             ('US', '06 830'), ('US', '19 801'), ('DE', '10 117'), ('CA', 'K1A0B1'), ('CA', 'K1A-0B1'),
+             ('PT', '1050 010'), ('PT', '1050-010'), ('PT', '1050010'), ('GB', 'SW1A-1AA'), ('GB', 'SW1A1AA'),
+             ('BR', '01310 100'), ('VG', 'VG 1110'), ('VG', 'VG-1110')) v(cc, written);
+
+-- Jersey, Guernsey and the Isle of Man codes start with the country's own
+-- letters, so they must keep working as written and the retry must not turn
+-- a broken one into a valid one.
+SELECT cc, written, to_postal_code(written, cc) AS parsed
+FROM (VALUES ('IM', 'IM1 1AA'), ('JE', 'JE4 9WG'), ('GG', 'GY1 1ZX'), ('IM', 'IM1 SPT'), ('JE', 'JEL 0BD'),
+             ('IM', 'IM1 2P'), ('JE', 'JE1 1G'), ('GG', 'GG1 1AA'), ('IM', 'IM 1AA')) v(cc, written);
+
+-- ... and none of it reaches address text, which is a data-cleaning job, not a postcode one
+SELECT cc, written, to_postal_code(written, cc) AS parsed
+FROM (VALUES ('US', 'DE 19801'), ('US', 'DELAWARE 19803'), ('AU', 'NSW 2000'), ('CA', 'ON L6M 0A8'),
+             ('PT', '1200-445 LISBON'), ('IT', 'CAP 00144'), ('IE', 'DUBLIN 2'), ('US', 'PO BOX 3085'),
+             ('US', '9021'), ('US', '902101'), ('LU', 'L-12345')) v(cc, written);
+
+-- the same for fragments, ranges and the operator
+SELECT lower_bound('US-US 90') AS a, lower_bound('LU-L 14') AS b, upper_bound('PT-1050 0') AS c;
+SELECT 'US-90210'::postal_code % 'US-US90' AS yes, 'US-90210'::postal_code % 'US-9 02' AS also_yes, 'US-90210'::postal_code % 'US-91' AS no;
+
 -- ===== Built-in and user assignments =========================================
 -- What ships with the extension is separate from what users assign, so a dump
 -- can carry exactly the latter. The view shows both; a user row wins.

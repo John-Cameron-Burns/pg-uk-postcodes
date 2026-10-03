@@ -299,6 +299,26 @@ It is exactly `to_postal_code(...) IS NOT NULL`, so every per-country rule
 (Canadian excluded letters, Eircode's alphabet, ZIP+4 `0000`, ...) is enforced
 by the same parser at ingest and in `is_valid()` -- they cannot disagree.
 
+**What counts as the same code.** Real data spells one code several ways, so some
+differences of spelling are not errors. Anything a format accepts as written is taken
+as written. Only if that fails are these tried, in this order, and the first that
+parses wins:
+
+* the country's own letters dropped from the front -- `MH96960`, `AI 2640`,
+  `US 90210`, `LU1471` (the country is already known). Jersey, Guernsey and Isle of
+  Man codes start with their country's letters, but they are tried as written first,
+  so `IM1 1AA` is unaffected and `IM1 SPT` is still rejected;
+* spaces and hyphens swapped -- `1050 010` for `1050-010`, `L 1820` for `L-1820`;
+* spaces dropped -- `06 830`, `19 801`, `K1A0B1`.
+
+Spacing at the ends, doubled spaces and spaces next to a hyphen are tidied before any
+of that (`" us - 90210 "`). These only re-spell the same characters, so they can
+recognise a code but never turn something that isn't one into one: a value that parsed
+before parses to the same value now. Text *around* a code is a different job and is
+not attempted -- `DE 19801`, `NSW 2000`, `ON L6M 0A8`, `1200-445 LISBON`, `CAP 00144`,
+`PO BOX 3085` are all rejected. Pulling the postcode out of address text is data
+cleaning, to be done before the value reaches this type.
+
 ### Locking a column to a country
 
 Like PostGIS locking a geometry column to an SRID with `geometry(Point, 4326)`, a

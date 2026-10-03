@@ -161,12 +161,66 @@ static const char *fmt_describe (const fmt_impl *f) {
 }
 static size_t fmt_max_text_len (const fmt_impl *f) { return f->enc ? f->enc->max_text_len : (size_t) f->tpl.nitems; }
 
+static inline bool ascii_alpha (char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+static inline char ascii_upper (char c) { return (c >= 'a' && c <= 'z') ? (char) (c - 32) : c; }
+
+// ---- obvious variants ---------------------------------------------------------
+// Real data writes the same code in slightly different ways. Whatever a format
+// accepts as written is taken exactly as written; only when that fails are
+// these variants tried, in order, and the first that parses wins:
+//   - with the country's own letters dropped from the front ("MH96960",
+//     "AI 2640" -> the code, since the country is already known; "IM1 1AA" is
+//     tried as written first, so Jersey, Guernsey and the Isle of Man are safe);
+//   - each of those with spaces and hyphens swapped ("1050 010" for "1050-010",
+//     "L 1820" for "L-1820", "SW1A-1AA");
+//   - or with the spaces dropped altogether ("06 830", "19 801", "K1A0B1").
+// They only ever re-spell the same characters, so a variant can't turn
+// something that is not a code into one, only recognise a spelling that is.
+#define MAX_FORMS 8
+
+static int variant_forms (const char *text, const char iso2[2], const char *forms[MAX_FORMS]) {
+   int n = 0;
+   const char *bases[2] = { text, NULL };
+   char a = text[0], b = a ? text[1] : '\0';
+   if (ascii_upper(a) == iso2[0] && ascii_upper(b) == iso2[1]) {
+      const char *rest = text + 2;
+      if (*rest == ' ' || *rest == '-') rest++;
+      if (*rest) bases[1] = rest;
+   }
+
+   for (int i = 0; i < 2; i++) {
+      if (!bases[i]) continue;
+      char *spaced = pstrdup(bases[i]), *hyphened = pstrdup(bases[i]);
+      char *packed = palloc(strlen(bases[i]) + 1);
+      size_t k = 0;
+      for (const char *c = bases[i]; *c; c++) if (*c != ' ') packed[k++] = *c;
+      packed[k] = '\0';
+      for (char *c = hyphened; *c; c++) if (*c == ' ') *c = '-';
+      for (char *c = spaced; *c; c++) if (*c == '-') *c = ' ';
+
+      const char *cand[4] = { bases[i], hyphened, spaced, packed };
+      for (int j = 0; j < 4; j++) {
+         bool seen = false;
+         for (int m = 0; m < n; m++) if (strcmp(forms[m], cand[j]) == 0) seen = true;
+         if (!seen && n < MAX_FORMS) forms[n++] = cand[j];
+      }
+   }
+   return n;
+}
+
 // Text may carry the country's own letters in front ("VG1110") when the
 // template says that is how the country writes its codes (a leading CC);
 // they are checked here and dropped, since the country is already known.
-static bool fmt_parse_valid (const fmt_impl *f, const char iso2[2], const char *text, uint64_t *payload) {
+static bool fmt_parse_one (const fmt_impl *f, const char iso2[2], const char *text, uint64_t *payload) {
    if (f->enc) return f->enc->parse(text, false, payload) && f->enc->valid(*payload);
    return pc_template_parse(&f->tpl, pc_template_skip_cc(&f->tpl, iso2, text), payload);
+}
+static bool fmt_parse_valid (const fmt_impl *f, const char iso2[2], const char *text, uint64_t *payload) {
+   const char *forms[MAX_FORMS];
+   int n = variant_forms(text, iso2, forms);
+   for (int i = 0; i < n; i++)
+      if (fmt_parse_one(f, iso2, forms[i], payload)) return true;
+   return false;
 }
 static int fmt_render (const fmt_impl *f, uint64_t payload, char *buf) {
    return f->enc ? f->enc->render(payload, buf) : pc_template_render(&f->tpl, payload, buf);
@@ -175,9 +229,16 @@ static bool fmt_valid (const fmt_impl *f, uint64_t payload) {
    return f->enc ? f->enc->valid(payload) : pc_template_valid(&f->tpl, payload);
 }
 static bool fmt_has_range (const fmt_impl *f) { return f->enc ? f->enc->range != NULL : true; }
-static bool fmt_range (const fmt_impl *f, const char iso2[2], const char *frag, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+static bool fmt_range_one (const fmt_impl *f, const char iso2[2], const char *frag, uint64_t *lo, uint64_t *hi, bool *unbounded) {
    return f->enc ? f->enc->range(frag, lo, hi, unbounded)
                  : pc_template_range(&f->tpl, pc_template_skip_cc(&f->tpl, iso2, frag), lo, hi, unbounded);
+}
+static bool fmt_range (const fmt_impl *f, const char iso2[2], const char *frag, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+   const char *forms[MAX_FORMS];
+   int n = variant_forms(frag, iso2, forms);
+   for (int i = 0; i < n; i++)
+      if (fmt_range_one(f, iso2, forms[i], lo, hi, unbounded)) return true;
+   return false;
 }
 static bool fmt_has_outcode (const fmt_impl *f) { return f->enc ? f->enc->outcode != NULL : f->tpl.has_tail; }
 static uint64_t fmt_outcode (const fmt_impl *f, uint64_t payload) {
@@ -195,8 +256,6 @@ static pc_format lookup_country (const char *cc, size_t len, char out_iso2[2]) {
    return fmt;
 }
 
-static inline bool ascii_alpha (char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
-static inline char ascii_upper (char c) { return (c >= 'a' && c <= 'z') ? (char) (c - 32) : c; }
 
 // A column declared postal_code('US') carries the country as its type modifier
 // (typmod): the packed ISO letters, so 0..825, with -1 meaning "not locked".
