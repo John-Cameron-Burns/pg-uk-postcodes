@@ -204,6 +204,7 @@ static void test_compile (void) {
    const char *good[] = {
       "N", "NN", "NNN NN", "NN-NNN", "NNNN AA", "AAAA NNNN", "X", "XXXXXXXXX", "NNNNNNNNNNNNNN",
       "NNNNN[-NNNN]", "ANA[ NAN]", "NNNNNNN[NNNNNNN]", "NNN[NN]", "XXX[ XXX]", "N[ N]",
+      "CCNNNN", "CC NNNN", "CC-NNNN", "CCN-NNNN", "CCNN NNN", "CCNNN[N]",
    };
    for (size_t i = 0; i < sizeof good / sizeof *good; i++) {
       bool ok = pc_template_compile(good[i], &t, err, sizeof err);
@@ -215,6 +216,7 @@ static void test_compile (void) {
       "", "n", "NNa", "NN?", " NN", "-NN", "NN ", "NN-", "NN  NN", "N--N", "NN [NN]", "NN[ ]", "NN[]", "[NN]", "NN[NN",
       "NN]", "NN[N][N]", "NN[N]N", "NN[NN]]", "NN[N[N]]", "XXXXXXXXXX", "NNNNNNNNNNNNNNN", "NNNNNNNN[NNNNNNN]",
       "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN", "NN[N ]",
+      "CC", "CC ", "CC-", "CC[N]", "NCCN", "CNNNN", "CCC", "CC  NN",
    };
    for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) {
       bool ok = pc_template_compile(bad[i], &t, err, sizeof err);
@@ -229,7 +231,43 @@ static void test_compile (void) {
    CHECK(pc_template_compile("ANA[ NAN]", &t, err, sizeof err) && t.head_space == 26ull * 10 * 26 && t.tail_space == 10ull * 26 * 10);
 }
 
+static void test_cc_prefix (void) {
+   pc_template t, plain;
+   char err[128];
+   CHECK(pc_template_compile("CCNNNN", &t, err, sizeof err) && t.cc_prefix && t.nitems == 4 && t.total == 10000);
+   CHECK(pc_template_compile("NNNN", &plain, err, sizeof err) && !plain.cc_prefix);
+
+   const char vg[2] = { 'V', 'G' };
+   const char *skip[][2] = {      // text, expected remainder
+      { "VG1110", "1110" }, { "vg1110", "1110" }, { "VG 1110", "1110" }, { "VG-1110", "1110" },
+      { "1110", "1110" }, { "AB1110", "AB1110" }, { "V", "V" }, { "VG", "" }, { "", "" },
+   };
+   for (size_t i = 0; i < sizeof skip / sizeof *skip; i++)
+      CHECK(strcmp(pc_template_skip_cc(&t, vg, skip[i][0]), skip[i][1]) == 0);
+   CHECK(strcmp(pc_template_skip_cc(&plain, vg, "VG1110"), "VG1110") == 0);   // only when the template says so
+
+   // the prefix changes nothing about the code itself
+   uint64_t a, b;
+   CHECK(pc_template_parse(&t, "1110", &a));
+   CHECK(pc_template_parse(&t, pc_template_skip_cc(&t, vg, "VG-1110"), &b) && a == b);
+   CHECK(!pc_template_parse(&t, "VG1110", &b));        // the core does not strip: the caller does
+   char buf[16];
+   pc_template_render(&t, a, buf);
+   CHECK(strcmp(buf, "1110") == 0);                    // and it is not written back
+
+   uint64_t lo, hi;
+   bool unb;
+   CHECK(pc_template_range(&t, pc_template_skip_cc(&t, vg, "VG11"), &lo, &hi, &unb) && lo == 1100 && hi == 1200 && !unb);
+
+   // CC may be followed by the usual separators inside the code
+   CHECK(pc_template_compile("CCN-NNNN", &t, err, sizeof err) && t.nitems == 6);
+   CHECK(pc_template_parse(&t, pc_template_skip_cc(&t, vg, "VG1-1100"), &a));
+   pc_template_render(&t, a, buf);
+   CHECK(strcmp(buf, "1-1100") == 0);
+}
+
 int main (void) {
+   test_cc_prefix();
    test_compile();
 
    // small enough to check exhaustively, with fragments from every value

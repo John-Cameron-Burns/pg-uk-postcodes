@@ -161,9 +161,12 @@ static const char *fmt_describe (const fmt_impl *f) {
 }
 static size_t fmt_max_text_len (const fmt_impl *f) { return f->enc ? f->enc->max_text_len : (size_t) f->tpl.nitems; }
 
-static bool fmt_parse_valid (const fmt_impl *f, const char *text, uint64_t *payload) {
+// Text may carry the country's own letters in front ("VG1110") when the
+// template says that is how the country writes its codes (a leading CC);
+// they are checked here and dropped, since the country is already known.
+static bool fmt_parse_valid (const fmt_impl *f, const char iso2[2], const char *text, uint64_t *payload) {
    if (f->enc) return f->enc->parse(text, false, payload) && f->enc->valid(*payload);
-   return pc_template_parse(&f->tpl, text, payload);
+   return pc_template_parse(&f->tpl, pc_template_skip_cc(&f->tpl, iso2, text), payload);
 }
 static int fmt_render (const fmt_impl *f, uint64_t payload, char *buf) {
    return f->enc ? f->enc->render(payload, buf) : pc_template_render(&f->tpl, payload, buf);
@@ -172,8 +175,9 @@ static bool fmt_valid (const fmt_impl *f, uint64_t payload) {
    return f->enc ? f->enc->valid(payload) : pc_template_valid(&f->tpl, payload);
 }
 static bool fmt_has_range (const fmt_impl *f) { return f->enc ? f->enc->range != NULL : true; }
-static bool fmt_range (const fmt_impl *f, const char *frag, uint64_t *lo, uint64_t *hi, bool *unbounded) {
-   return f->enc ? f->enc->range(frag, lo, hi, unbounded) : pc_template_range(&f->tpl, frag, lo, hi, unbounded);
+static bool fmt_range (const fmt_impl *f, const char iso2[2], const char *frag, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+   return f->enc ? f->enc->range(frag, lo, hi, unbounded)
+                 : pc_template_range(&f->tpl, pc_template_skip_cc(&f->tpl, iso2, frag), lo, hi, unbounded);
 }
 static bool fmt_has_outcode (const fmt_impl *f) { return f->enc ? f->enc->outcode != NULL : f->tpl.has_tail; }
 static uint64_t fmt_outcode (const fmt_impl *f, uint64_t payload) {
@@ -278,7 +282,7 @@ Datum postal_code_in (PG_FUNCTION_ARGS) {
    fmt_resolve_or_raise(fmt, &f);
 
    uint64_t payload;
-   if (! fmt_parse_valid(&f, national, &payload))
+   if (! fmt_parse_valid(&f, iso2, national, &payload))
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       errmsg (_("cannot parse \"%s\" as a %s postal code"),
                               national, fmt_describe(&f))));
@@ -471,7 +475,7 @@ Datum postal_code_from_parts (PG_FUNCTION_ARGS) {
    fmt_resolve_or_raise(fmt, &f);
 
    uint64_t payload;
-   if (! fmt_parse_valid(&f, national, &payload))
+   if (! fmt_parse_valid(&f, iso2, national, &payload))
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       errmsg (_("cannot parse \"%s\" as a %s postal code"), national, fmt_describe(&f))));
 
@@ -506,7 +510,7 @@ static bool lenient_build (const char *postcode, const char *cc, postal_code *ou
    fmt_resolve_or_raise(fmt, &f);
 
    uint64_t payload;
-   if (! fmt_parse_valid(&f, national, &payload)) return false;
+   if (! fmt_parse_valid(&f, iso2, national, &payload)) return false;
 
    *out = pc_assemble(iso2, fmt, payload);
    return true;
@@ -557,7 +561,7 @@ static pc_format fragment_range (const char *str, char iso2[2], uint64_t *lo, ui
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg (_("the %s postal code format does not support ranges"), fmt_describe(&f))));
 
-   if (! fmt_range(&f, hyphen + 1, lo, hi, unbounded))
+   if (! fmt_range(&f, iso2, hyphen + 1, lo, hi, unbounded))
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       errmsg (_("cannot parse \"%s\" as a fragment of a %s postal code"),
                               hyphen + 1, fmt_describe(&f))));
@@ -679,7 +683,7 @@ static bool fragment_range_try (const char *str, char iso2[2], pc_format *fmt,
 
    uint64_t lo, hi = 0;
    bool unbounded;
-   if (! fmt_range(&f, hyphen + 1, &lo, &hi, &unbounded)) return false;
+   if (! fmt_range(&f, iso2, hyphen + 1, &lo, &hi, &unbounded)) return false;
 
    *lo_pc = pc_assemble(iso2, *fmt, lo);
    *hi_pc = pc_assemble(iso2, unbounded ? (pc_format) PC_FMT_END : *fmt, unbounded ? 0 : hi);

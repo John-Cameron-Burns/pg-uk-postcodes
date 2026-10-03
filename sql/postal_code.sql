@@ -250,20 +250,21 @@ WHERE is_valid(code, cc) IS DISTINCT FROM (to_postal_code(code, cc) IS NOT NULL)
 -- genuinely new format shape needs real C. See postal_code_country.c
 -- for how postal_code_in()/postal_code(text,text) look this up.
 
-SELECT name FROM postal_code_formats ORDER BY name;
-SELECT iso2, format_name FROM postal_code_country_formats ORDER BY iso2;
+SELECT name FROM postal_code_formats WHERE name NOT LIKE 'template:%' ORDER BY name;
+SELECT iso2, format_name FROM postal_code_country_formats
+WHERE iso2 IN ('BR', 'CA', 'CZ', 'FR', 'LU', 'US', 'GB', 'GG', 'IM', 'JE', 'IE') ORDER BY iso2;
 
 -- unassigned country, existing format shape: fails until assigned
-SELECT 'DE-12345'::postal_code;
+SELECT 'XZ-12345'::postal_code;
 
--- Germany also uses a plain 5-digit code -- same shape as FR/CZ, so
+-- another country uses a plain 5-digit code -- same shape as FR/CZ, so
 -- this needs no new encoder, just an assignment
-SELECT add_country_format('de', 'FR'); -- lower-case cc is normalised
-SELECT 'DE-12345'::postal_code;
-SELECT country('DE-12345'::postal_code);
+SELECT add_country_format('xz', 'FR'); -- lower-case cc is normalised
+SELECT 'XZ-12345'::postal_code;
+SELECT country('XZ-12345'::postal_code);
 
 -- reassigning is idempotent / an upsert, not an error
-SELECT add_country_format('DE', 'FR');
+SELECT add_country_format('XZ', 'FR');
 
 -- unknown format name
 SELECT add_country_format('XX', 'NOPE');
@@ -276,10 +277,10 @@ SELECT add_country_format('1E', 'FR');
 -- decoding uses the format already packed into the value's own bits,
 -- never a fresh lookup -- but parsing NEW text for that country now
 -- fails
-CREATE TEMP TABLE de_before_removal AS SELECT postal_code('12345', 'DE') AS pc;
-SELECT remove_country_format('DE');
-SELECT pc FROM de_before_removal; -- still renders fine, unaffected by the removal
-SELECT 'DE-12345'::postal_code;   -- but parsing fresh text for DE fails now
+CREATE TEMP TABLE xz_before_removal AS SELECT postal_code('12345', 'XZ') AS pc;
+SELECT remove_country_format('XZ');
+SELECT pc FROM xz_before_removal; -- still renders fine, unaffected by the removal
+SELECT 'XZ-12345'::postal_code;   -- but parsing fresh text for XZ fails now
 
 
 -- ===== Partial match: fragments, bounds and ranges ============================
@@ -428,21 +429,21 @@ RESET enable_bitmapscan;
 -- a column fragment works too (computed per row)
 SELECT count(*) AS joined FROM (VALUES ('US-9'), ('CA-T'), ('bad')) f(frag) JOIN addr a ON a.pc % f.frag;
 
--- the cached-plan safety net, for % as for postal_prefix(): Switzerland is
+-- the cached-plan safety net, for % as for postal_prefix(): Country XY is
 -- assigned the plain-5-digit format, a row is stored, a statement is prepared
--- (its plan cached), then Switzerland is reassigned to the Czech format. The
+-- (its plan cached), then Country XY is reassigned to the Czech format. The
 -- same prepared statement must now mean the CZ range.
-SELECT add_country_format('CH', 'FR');
-INSERT INTO addr (pc) VALUES ('CH-12345');
-PREPARE ch_prefix AS SELECT pc FROM addr WHERE pc % 'CH-12';
-EXECUTE ch_prefix;
-EXECUTE ch_prefix;
-SELECT add_country_format('CH', 'CZ');
-INSERT INTO addr (pc) VALUES ('CH-12345');
-EXECUTE ch_prefix;
-DEALLOCATE ch_prefix;
-SELECT remove_country_format('CH');
-DELETE FROM addr WHERE pc::text LIKE 'CH-%';
+SELECT add_country_format('XY', 'FR');
+INSERT INTO addr (pc) VALUES ('XY-12345');
+PREPARE xy_prefix AS SELECT pc FROM addr WHERE pc % 'XY-12';
+EXECUTE xy_prefix;
+EXECUTE xy_prefix;
+SELECT add_country_format('XY', 'CZ');
+INSERT INTO addr (pc) VALUES ('XY-12345');
+EXECUTE xy_prefix;
+DEALLOCATE xy_prefix;
+SELECT remove_country_format('XY');
+DELETE FROM addr WHERE pc::text LIKE 'XY-%';
 
 -- ===== Locking a column to a country =======================================
 -- postal_code('US') as a column type, the way PostGIS locks a geometry column
@@ -529,22 +530,22 @@ SELECT is_valid('12345', 'ZZ') AS can_anything_be_valid_there;
 -- ===== Templated formats =====================================================
 -- A country made of fixed-width digit/letter groups needs only an SQL row.
 --
--- First, a template that was rolled back must not be remembered. Slot 16 is
--- NNN in the first transaction and AAA in the second, and the backend caches
+-- First, a template that was rolled back must not be remembered. The first free slot is
+-- NAN in the first transaction and ANA in the second, and the backend caches
 -- what a slot means; the second must not see the first.
 BEGIN;
-SELECT add_country_template('PL', 'NNN');
-SELECT 'PL-123'::postal_code;
+SELECT add_country_template('XA', 'NAN');
+SELECT 'XA-1A2'::postal_code;
 ROLLBACK;
 BEGIN;
-SELECT add_country_template('PL', 'AAA');
-SELECT 'PL-ABC'::postal_code;
+SELECT add_country_template('XA', 'ANA');
+SELECT 'XA-A1A'::postal_code;
 SAVEPOINT s;
-SELECT 'PL-123'::postal_code;
+SELECT 'XA-1A2'::postal_code;
 ROLLBACK TO s;
 ROLLBACK;
-SELECT 'PL-ABC'::postal_code;
-SELECT count(*) AS slots_in_use_after_rollbacks FROM postal_code_templates;
+SELECT 'XA-A1A'::postal_code;
+SELECT count(*) AS user_templates_after_rollbacks FROM postal_code_templates WHERE NOT builtin;
 
 -- templates that are not templates
 SELECT postal_code_template_check('NNNNN[-NNNN]') AS ok, postal_code_template_check('X') AS also_ok;
@@ -555,117 +556,117 @@ SELECT postal_code_template_check('NN[N');
 SELECT postal_code_template_check('NN[N][N]');
 SELECT postal_code_template_check('XXXXXXXXXX');
 \set VERBOSITY terse
-SELECT add_country_template('PL', 'NN?');
+SELECT add_country_template('XA', 'NN?');
 SELECT add_country_template('PLX', 'NN');
 \set VERBOSITY default
 
 -- Assigning countries. These persist until the end of the section (the
 -- templates themselves are permanent), so the checks below can fail freely.
-SELECT add_country_template('PL', 'NN-NNN');
-SELECT add_country_template('NL', 'NNNN AA');
-SELECT add_country_template('SE', 'NNN NN');
-SELECT add_country_template('MC', 'NNNNN[-NNNN]');
-SELECT add_country_template('AT', 'NNNN');
-SELECT add_country_template('DE', 'NNNN');      -- the same shape shares a slot
+SELECT add_country_template('XA', 'NN-NNN');
+SELECT add_country_template('XB', 'NNNN AA');
+SELECT add_country_template('XC', 'NNN NN');
+SELECT add_country_template('XD', 'NNNNN[-NNNN]');
+SELECT add_country_template('XE', 'NNNN');
+SELECT add_country_template('XF', 'NNNN');      -- the same shape shares a slot
 SELECT add_country_template('pl', 'NN-NNN');    -- cc is normalised; same template, same slot
-SELECT slot, template FROM postal_code_templates ORDER BY slot;
-SELECT iso2, format_name FROM postal_code_country_formats WHERE format_name LIKE 'template:%' ORDER BY iso2;
+SELECT template FROM postal_code_templates WHERE NOT builtin ORDER BY slot;
+SELECT iso2, format_name FROM postal_code_country_formats WHERE iso2 BETWEEN 'XA' AND 'XF' ORDER BY iso2;
 
 -- in, out, either case, separators optional
-SELECT 'PL-00-950'::postal_code AS a, 'pl-00950'::postal_code AS b, postal_code('00-950', 'PL') AS c, postal_code('00950', 'PL') AS d;
-SELECT 'NL-1012 jl'::postal_code AS a, 'NL-1012JL'::postal_code AS b;
-SELECT 'SE-114 55'::postal_code, 'MC-98000'::postal_code AS bare, 'MC-98000-0001'::postal_code AS plus4;
-SELECT 'MC-98000-0000'::postal_code AS zeros_are_fine_in_a_template;
+SELECT 'XA-00-950'::postal_code AS a, 'xa-00950'::postal_code AS b, postal_code('00-950', 'XA') AS c, postal_code('00950', 'XA') AS d;
+SELECT 'XB-1012 jl'::postal_code AS a, 'XB-1012JL'::postal_code AS b;
+SELECT 'XC-114 55'::postal_code, 'XD-98000'::postal_code AS bare, 'XD-98000-0001'::postal_code AS plus4;
+SELECT 'XD-98000-0000'::postal_code AS zeros_are_fine_in_a_template;
 
 -- bad input says why
-SELECT 'PL-0O-950'::postal_code;
-SELECT 'PL-00-9500'::postal_code;
-SELECT 'PL-00-95'::postal_code;
-SELECT 'NL-1012 J'::postal_code;
-SELECT 'NL-1012 11'::postal_code;
-SELECT 'MC-98000-'::postal_code;
-SELECT to_postal_code('PL-00-9500') AS null_not_error, is_valid('PL-00-950') AS yes, is_valid('PL-00-95') AS no;
+SELECT 'XA-0O-950'::postal_code;
+SELECT 'XA-00-9500'::postal_code;
+SELECT 'XA-00-95'::postal_code;
+SELECT 'XB-1012 J'::postal_code;
+SELECT 'XB-1012 11'::postal_code;
+SELECT 'XD-98000-'::postal_code;
+SELECT to_postal_code('XA-00-9500') AS null_not_error, is_valid('XA-00-950') AS yes, is_valid('XA-00-95') AS no;
 
 -- ordering is text ordering; a coarser value sorts before the finer ones, and
 -- countries stay in ISO order whichever kind of format they use
-SELECT pc FROM (VALUES ('MC-98000-0001'), ('MC-98000'), ('MC-97999-9999'), ('MC-98001'), ('MC-98000-0000'),
-                       ('NL-1012 JL'), ('NL-1012 JA'), ('NL-1011 ZZ'), ('MC-~'), ('PL-00-950'), ('PL-00-949'),
-                       ('GB-SW1A'), ('AT-1010'), ('US-90210')) v(t), LATERAL (SELECT t::postal_code AS pc) x
+SELECT pc FROM (VALUES ('XD-98000-0001'), ('XD-98000'), ('XD-97999-9999'), ('XD-98001'), ('XD-98000-0000'),
+                       ('XB-1012 JL'), ('XB-1012 JA'), ('XB-1011 ZZ'), ('XD-~'), ('XA-00-950'), ('XA-00-949'),
+                       ('GB-SW1A'), ('XE-1010'), ('US-90210')) v(t), LATERAL (SELECT t::postal_code AS pc) x
 ORDER BY pc;
 
 -- outcode: the part before the optional group, if the template has one
 SELECT pc, outcode(pc) AS outcode, district(pc) AS district
-FROM (VALUES ('MC-98000-0001'), ('MC-98000'), ('PL-00-950'), ('NL-1012 JL')) v(t), LATERAL (SELECT t::postal_code AS pc) x;
-SELECT outcode(outcode('MC-98000-0001')) = outcode('MC-98000-0001') AS idempotent;
+FROM (VALUES ('XD-98000-0001'), ('XD-98000'), ('XA-00-950'), ('XB-1012 JL')) v(t), LATERAL (SELECT t::postal_code AS pc) x;
+SELECT outcode(outcode('XD-98000-0001')) = outcode('XD-98000-0001') AS idempotent;
 
 -- fragments, bounds and ranges, as for the compiled formats
-SELECT lower_bound('PL-00') AS lo, upper_bound('PL-00') AS hi;
-SELECT lower_bound('PL-00-9') AS lo, upper_bound('PL-00-9') AS hi;
-SELECT lower_bound('PL-99') AS lo, upper_bound('PL-99') AS hi_is_the_end_of_the_country;
-SELECT lower_bound('NL-10') AS lo, upper_bound('NL-10') AS hi;
-SELECT lower_bound('NL-1012 J') AS lo, upper_bound('NL-1012 J') AS hi;
-SELECT lower_bound('NL-1012 ZZ') AS lo, upper_bound('NL-1012 ZZ') AS hi;
-SELECT lower_bound('MC-98000') AS lo, upper_bound('MC-98000') AS hi;
-SELECT lower_bound('MC-98000-') AS lo, upper_bound('MC-98000-') AS hi;
-SELECT lower_bound('MC-98000-12') AS lo, upper_bound('MC-98000-12') AS hi;
-SELECT lower_bound('MC-98000-9999') AS lo, upper_bound('MC-98000-9999') AS hi;
-SELECT lower_bound('MC-99999-99') AS lo, upper_bound('MC-99999-99') AS hi_is_the_end_of_the_country;
-SELECT postal_prefix('SE-11') AS r, 'SE-114 55'::postal_code <@ postal_prefix('SE-11') AS inside;
-SELECT lower_bound('PL-00-9500');
-SELECT lower_bound('PL-A');
-SELECT lower_bound('NL-1012 JLX');
+SELECT lower_bound('XA-00') AS lo, upper_bound('XA-00') AS hi;
+SELECT lower_bound('XA-00-9') AS lo, upper_bound('XA-00-9') AS hi;
+SELECT lower_bound('XA-99') AS lo, upper_bound('XA-99') AS hi_is_the_end_of_the_country;
+SELECT lower_bound('XB-10') AS lo, upper_bound('XB-10') AS hi;
+SELECT lower_bound('XB-1012 J') AS lo, upper_bound('XB-1012 J') AS hi;
+SELECT lower_bound('XB-1012 ZZ') AS lo, upper_bound('XB-1012 ZZ') AS hi;
+SELECT lower_bound('XD-98000') AS lo, upper_bound('XD-98000') AS hi;
+SELECT lower_bound('XD-98000-') AS lo, upper_bound('XD-98000-') AS hi;
+SELECT lower_bound('XD-98000-12') AS lo, upper_bound('XD-98000-12') AS hi;
+SELECT lower_bound('XD-98000-9999') AS lo, upper_bound('XD-98000-9999') AS hi;
+SELECT lower_bound('XD-99999-99') AS lo, upper_bound('XD-99999-99') AS hi_is_the_end_of_the_country;
+SELECT postal_prefix('XC-11') AS r, 'XC-114 55'::postal_code <@ postal_prefix('XC-11') AS inside;
+SELECT lower_bound('XA-00-9500');
+SELECT lower_bound('XA-A');
+SELECT lower_bound('XB-1012 JLX');
 
 -- partial match
-SELECT 'MC-98000-0001'::postal_code % 'MC-98', 'MC-98000'::postal_code % 'MC-98000-', 'MC-97999'::postal_code % 'MC-98',
-       'NL-1012 JL'::postal_code % 'NL-1012 J', 'NL-1012 JL'::postal_code !% 'NL-1013', 'PL-00-950'::postal_code % 'PL-0';
+SELECT 'XD-98000-0001'::postal_code % 'XD-98', 'XD-98000'::postal_code % 'XD-98000-', 'XD-97999'::postal_code % 'XD-98',
+       'XB-1012 JL'::postal_code % 'XB-1012 J', 'XB-1012 JL'::postal_code !% 'XB-1013', 'XA-00-950'::postal_code % 'XA-0';
 
 -- all of it over an index
 CREATE TEMP TABLE zips (id serial, pc postal_code);
-INSERT INTO zips (pc) SELECT postal_code(lpad(g::text, 5, '0'), 'MC') FROM generate_series(95000, 99999, 7) g;
-INSERT INTO zips (pc) SELECT postal_code(lpad((95000 + g)::text, 5, '0') || '-' || lpad(g::text, 4, '0'), 'MC') FROM generate_series(1, 4000, 13) g;
+INSERT INTO zips (pc) SELECT postal_code(lpad(g::text, 5, '0'), 'XD') FROM generate_series(95000, 99999, 7) g;
+INSERT INTO zips (pc) SELECT postal_code(lpad((95000 + g)::text, 5, '0') || '-' || lpad(g::text, 4, '0'), 'XD') FROM generate_series(1, 4000, 13) g;
 CREATE INDEX ON zips (pc);
 ANALYZE zips;
-SELECT count(*) AS by_range FROM zips WHERE pc <@ postal_prefix('MC-9812');
-SELECT count(*) AS by_text  FROM zips WHERE pc::text LIKE 'MC-9812%';
-SELECT count(*) AS by_op    FROM zips WHERE pc % 'MC-9812';
-SELECT count(*) AS plus4s   FROM zips WHERE pc % 'MC-96000-0';
-SELECT count(*) AS by_text  FROM zips WHERE pc::text LIKE 'MC-96000-0%';
+SELECT count(*) AS by_range FROM zips WHERE pc <@ postal_prefix('XD-9812');
+SELECT count(*) AS by_text  FROM zips WHERE pc::text LIKE 'XD-9812%';
+SELECT count(*) AS by_op    FROM zips WHERE pc % 'XD-9812';
+SELECT count(*) AS plus4s   FROM zips WHERE pc % 'XD-96000-0';
+SELECT count(*) AS by_text  FROM zips WHERE pc::text LIKE 'XD-96000-0%';
 SET enable_seqscan = off;
-EXPLAIN (COSTS OFF) SELECT * FROM zips WHERE pc <@ postal_prefix('MC-9812');
+EXPLAIN (COSTS OFF) SELECT * FROM zips WHERE pc <@ postal_prefix('XD-9812');
 RESET enable_seqscan;
 
 -- a column locked to a templated country
-CREATE TEMP TABLE pl (pc postal_code('PL'));
-INSERT INTO pl VALUES ('PL-00-950');
+CREATE TEMP TABLE pl (pc postal_code('XA'));
+INSERT INTO pl VALUES ('XA-00-950');
 COPY pl FROM stdin;
 01-001
 \.
-INSERT INTO pl VALUES ('NL-1012 JL');
+INSERT INTO pl VALUES ('XB-1012 JL');
 SELECT pc FROM pl ORDER BY pc;
 
 -- a country moves to a different template: new values follow the new one, values
 -- already stored go on reading as they were written
-CREATE TEMP TABLE pl_old AS SELECT 'PL-00-950'::postal_code AS pc;
-SELECT add_country_template('PL', 'NNNNN');
-SELECT 'PL-00950'::postal_code AS new_style;
-SELECT 'PL-00-950'::postal_code;
+CREATE TEMP TABLE pl_old AS SELECT 'XA-00-950'::postal_code AS pc;
+SELECT add_country_template('XA', 'NNNNN');
+SELECT 'XA-00950'::postal_code AS new_style;
+SELECT 'XA-00-950'::postal_code;
 SELECT pc AS still_reads_as_written, outcode(pc) IS NULL AS no_outcode FROM pl_old;
-SELECT pc = 'PL-00950'::postal_code AS different_format_different_value FROM pl_old;
-SELECT slot, template FROM postal_code_templates ORDER BY slot;
+SELECT pc = 'XA-00950'::postal_code AS different_format_different_value FROM pl_old;
+SELECT template FROM postal_code_templates WHERE NOT builtin ORDER BY slot;
 
 -- a template is permanent once written: values are read back through it
 \set VERBOSITY terse
-UPDATE postal_code_templates SET template = 'NNNNN' WHERE slot = 16;
-DELETE FROM postal_code_templates WHERE slot = 16;
+UPDATE postal_code_templates SET template = 'NNNNN' WHERE slot = 12;
+DELETE FROM postal_code_templates WHERE slot = 12;
 TRUNCATE postal_code_templates;
 \set VERBOSITY default
-SELECT slot, template FROM postal_code_templates ORDER BY slot;
+SELECT template FROM postal_code_templates WHERE NOT builtin ORDER BY slot;
 
-SELECT remove_country_format(cc) FROM unnest(ARRAY['PL', 'NL', 'SE', 'MC', 'AT', 'DE']) cc;
+SELECT remove_country_format(cc) FROM unnest(ARRAY['XA', 'XB', 'XC', 'XD', 'XE', 'XF']) cc;
 
--- and when all 47 slots are taken
+-- and when all 51 slots are taken
 BEGIN;
-SELECT count(add_country_template('PL', t)) AS filled FROM (
+SELECT count(add_country_template('XA', t)) AS filled FROM (
    SELECT t FROM (
       SELECT repeat('N', a) || repeat('A', b) AS t FROM generate_series(1, 6) a, generate_series(1, 4) b
       UNION ALL SELECT repeat('X', c) FROM generate_series(1, 9) c
@@ -674,11 +675,39 @@ SELECT count(add_country_template('PL', t)) AS filled FROM (
    ) q
    WHERE t NOT IN (SELECT template FROM postal_code_templates)
    ORDER BY t
-   LIMIT 47 - (SELECT count(*) FROM postal_code_templates)
+   LIMIT 51 - (SELECT count(*) FROM postal_code_templates)
 ) f;
 SELECT count(*) AS slots, min(slot), max(slot) FROM postal_code_templates;
-SELECT add_country_template('PL', 'NNNNNNNNNN');
+SELECT add_country_template('XA', 'NNNNNNNNNNN');
 ROLLBACK;
+
+-- ===== Countries whose own letters are part of the code ====================
+-- The British Virgin Islands write VG1110, Andorra AD500, Azerbaijan AZ 1000:
+-- the ISO letters are in the code. A template starting CC means that: the
+-- letters are optional on input, must be the country's own, and are neither
+-- stored nor written back, so all the spellings are one value in the UPU form.
+SELECT add_country_template('XG', 'CCNNNN');
+SELECT add_country_template('XH', 'CC NNNN');
+SELECT add_country_template('XJ', 'CCN-NNNN');
+SELECT postal_code('XG1110', 'XG') AS a, postal_code('xg-1110', 'XG') AS b, postal_code('1110', 'XG') AS c,
+       'XG-XG1110'::postal_code AS d, 'XG-XG-1110'::postal_code AS e, 'XG-1110'::postal_code AS f;
+SELECT postal_code('XG1110', 'XG') = postal_code('1110', 'XG') AS same_value, 'XG-XG1110'::postal_code::text AS written_back;
+SELECT 'XH-XH 1000'::postal_code AS a, 'XH-xh1000'::postal_code AS b, 'XH-1000'::postal_code AS c;
+SELECT 'XJ-XJ1-1100'::postal_code AS a, 'XJ-1-1100'::postal_code AS b;
+-- somebody else's letters are not the country's
+SELECT 'XG-AB1110'::postal_code;
+SELECT 'XG-X1110'::postal_code;
+SELECT 'XG-XG'::postal_code;
+SELECT to_postal_code('XG-AB1110') AS null_not_error, is_valid('XG1110', 'XG') AS yes, is_valid('AB1110', 'XG') AS no;
+-- ... and it works for fragments, ranges and the operator the same way
+SELECT lower_bound('XG-XG11') AS lo, upper_bound('XG-XG11') AS hi, lower_bound('XG-11') = lower_bound('XG-XG11') AS same;
+SELECT 'XG-XG1110'::postal_code % 'XG-XG11' AS yes, 'XG-1110'::postal_code % 'XG-12' AS no;
+-- the real ones
+SELECT postal_code('VG1110', 'VG') AS vg, postal_code('AD500', 'AD') AS ad, postal_code('AZ 1000', 'AZ') AS az,
+       postal_code('HT6110', 'HT') AS ht, postal_code('LC04 101', 'LC') AS lc, postal_code('LV-1001', 'LV') AS lv;
+SELECT 'BB-BB11000'::postal_code AS bb, 'KY-KY1-1100'::postal_code AS ky;
+SELECT postal_code('XX1110', 'VG');
+SELECT remove_country_format(cc) FROM unnest(ARRAY['XG', 'XH', 'XJ']) cc;
 
 -- ===== Built-in and user assignments =========================================
 -- What ships with the extension is separate from what users assign, so a dump
@@ -746,20 +775,20 @@ DROP INDEX addr_outcode_idx;
 -- changed, so the folded plan depends on postal_code_country_formats and a
 -- trigger invalidates it whenever that table changes. Austria is assigned the
 -- plain-5-digit format, a row is stored, a statement is prepared (its plan is
--- cached); then Austria is reassigned to the Czech format, which renders with
+-- cached); then Country XW is reassigned to the Czech format, which renders with
 -- a space. The same prepared statement must now mean the CZ range -- and so
 -- return the CZ-format row, not the old FR-format one.
-SELECT add_country_format('AT', 'FR');
-INSERT INTO addr (pc) VALUES ('AT-12345');
-PREPARE at_prefix AS SELECT pc FROM addr WHERE pc <@ postal_prefix('AT-12');
-EXECUTE at_prefix;
-EXECUTE at_prefix;
-SELECT add_country_format('AT', 'CZ');
-INSERT INTO addr (pc) VALUES ('AT-12345');
-EXECUTE at_prefix;
-DEALLOCATE at_prefix;
-SELECT remove_country_format('AT');
-DELETE FROM addr WHERE pc::text LIKE 'AT-%';
+SELECT add_country_format('XW', 'FR');
+INSERT INTO addr (pc) VALUES ('XW-12345');
+PREPARE xw_prefix AS SELECT pc FROM addr WHERE pc <@ postal_prefix('XW-12');
+EXECUTE xw_prefix;
+EXECUTE xw_prefix;
+SELECT add_country_format('XW', 'CZ');
+INSERT INTO addr (pc) VALUES ('XW-12345');
+EXECUTE xw_prefix;
+DEALLOCATE xw_prefix;
+SELECT remove_country_format('XW');
+DELETE FROM addr WHERE pc::text LIKE 'XW-%';
 
 
 -- Binary send/recv (postal_code_recv/postal_code_send, the

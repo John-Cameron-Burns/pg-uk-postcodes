@@ -381,7 +381,8 @@ COMMENT ON TABLE postal_code_user_countries IS
    'Country -> format assignments made with add_country_format() / add_country_template() / remove_country_format(), on top of postal_code_builtin_countries (a NULL format_name means a built-in assignment was removed). Included in pg_dump, so assignments survive a dump and restore. Edit through the functions, not by hand.';
 SELECT pg_extension_config_dump('postal_code_user_countries', '');
 -- the formats these refer to that a user created (templates); the built-in ones come with the extension
-SELECT pg_extension_config_dump('postal_code_formats', $$WHERE name LIKE 'template:%'$$);
+SELECT pg_extension_config_dump('postal_code_formats',
+   $$WHERE name LIKE 'template:%' AND name NOT IN (SELECT 'template:' || template FROM postal_code_templates WHERE builtin)$$);
 
 CREATE VIEW postal_code_country_formats AS
    SELECT u.iso2, u.format_name, false AS builtin, u.assigned_at
@@ -404,8 +405,8 @@ BEGIN
       RAISE EXCEPTION 'country code must be exactly two letters, got %', cc;
    END IF;
    IF NOT EXISTS (SELECT 1 FROM postal_code_formats WHERE name = format_name) THEN
-      RAISE EXCEPTION 'unknown postal_code format %, must be one of: %',
-         format_name, (SELECT string_agg(name, ', ' ORDER BY name) FROM postal_code_formats);
+      RAISE EXCEPTION 'unknown postal_code format %, must be one of: % (or use add_country_template() for a new shape)',
+         format_name, (SELECT string_agg(name, ', ' ORDER BY name) FROM postal_code_formats WHERE name NOT LIKE 'template:%');
    END IF;
    INSERT INTO postal_code_user_countries (iso2, format_name)
    VALUES (norm_cc, format_name)
@@ -452,16 +453,18 @@ COMMENT ON FUNCTION remove_country_format(text) IS
 -- through this table, so a template can never change once it has a slot
 -- (the trigger below refuses): to change a country's format, assign it a
 -- new template; values already written still decode under the old one.
--- Slots 16..62 are available, the same template is only ever stored once,
--- and countries sharing a shape share a slot.
+-- Slots 12..62 are available (the world's countries use about a third of
+-- them, in the generated block below), the same template is only ever stored
+-- once, and countries sharing a shape share a slot.
 CREATE TABLE postal_code_templates (
-   slot       smallint PRIMARY KEY CHECK (slot BETWEEN 16 AND 62),
+   slot       smallint PRIMARY KEY CHECK (slot BETWEEN 12 AND 62),
    template   text NOT NULL UNIQUE,
+   builtin    boolean NOT NULL DEFAULT false,
    created_at timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE postal_code_templates IS
-   'The templated postal_code formats in use: the slot is the format tag stored in every value written under it, so rows are permanent -- they cannot be updated or deleted. Add them with add_country_template(), not by hand. Included in pg_dump, because values cannot be read without them.';
-SELECT pg_extension_config_dump('postal_code_templates', '');
+   'The templated postal_code formats in use: the slot is the format tag stored in every value written under it, so rows are permanent -- they cannot be updated or deleted. Add them with add_country_template(), not by hand. The ones you add are included in pg_dump, because values cannot be read without them; the builtin ones come with the extension.';
+SELECT pg_extension_config_dump('postal_code_templates', 'WHERE NOT builtin');
 
 CREATE FUNCTION postal_code_template_check(text)
    RETURNS text
@@ -497,10 +500,10 @@ BEGIN
 
    SELECT t.slot INTO free_slot FROM postal_code_templates t WHERE t.template = spec;
    IF free_slot IS NULL THEN
-      SELECT min(g) INTO free_slot FROM generate_series(16, 62) g
+      SELECT min(g) INTO free_slot FROM generate_series(12, 62) g
       WHERE g NOT IN (SELECT t.slot FROM postal_code_templates t);
       IF free_slot IS NULL THEN
-         RAISE EXCEPTION 'all 47 postal_code template slots are in use';
+         RAISE EXCEPTION 'all 51 postal_code template slots are in use';
       END IF;
       INSERT INTO postal_code_templates (slot, template) VALUES (free_slot, spec);
    END IF;
@@ -514,6 +517,751 @@ END;
 $$;
 COMMENT ON FUNCTION add_country_template(text, text) IS
    'Assign (or reassign) a country to a templated format, creating the template if it is new: add_country_template(''PL'', ''NN-NNN''). N is a digit, A a letter, X either; '' '' and ''-'' are separators; one optional [ ] group may end the template (''NNNNN[-NNNN]''). Values already stored for the country keep the format they were written with.';
+
+-- ---- the world --------------------------------------------------------------
+-- Every ISO 3166-1 country and territory, and what is known about its postal
+-- codes, so that "no format" is never ambiguous: a country with no assignment
+-- either has no postal code system or has not been added.
+CREATE TABLE postal_code_iso_countries (
+   iso2  text PRIMARY KEY CHECK (iso2 ~ '^[A-Z]{2}$'),
+   name  text NOT NULL,
+   basis text NOT NULL,
+   note  text
+);
+COMMENT ON TABLE postal_code_iso_countries IS
+   'Every ISO 3166-1 country and territory with where its postal code format came from (built in, GeoNames data, Wikipedia''s list of postal codes), or "no postal codes" if it has no system. See the postal_code_world view. Maintained by this extension; the formats themselves are in postal_code_country_formats.';
+
+-- BEGIN generated by tools/world_formats.py -- edit that, not this
+-- Template slots are permanent: this list only ever grows (append, never reorder).
+INSERT INTO postal_code_templates (slot, template, builtin) VALUES
+   (12, 'AA NNNNN', true),
+   (13, 'AA XX', true),
+   (14, 'AAA NNNN', true),
+   (15, 'AAAA NAA', true),
+   (16, 'AAANN', true),
+   (17, 'AAA[ NNNN]', true),
+   (18, 'AANNNN', true),
+   (19, 'ANNN', true),
+   (20, 'AXNNN[NN]', true),
+   (21, 'CC NNNN', true),
+   (22, 'CCN-NNNN', true),
+   (23, 'CCNN NNN', true),
+   (24, 'CCNNN', true),
+   (25, 'CCNNNN', true),
+   (26, 'CCNNNNN', true),
+   (27, 'NN', true),
+   (28, 'NN-NNN', true),
+   (29, 'NNN', true),
+   (30, 'NNN NN', true),
+   (31, 'NNN-NNNN', true),
+   (32, 'NNNN', true),
+   (33, 'NNNNN', true),
+   (34, 'NNNNN-NNNNN', true),
+   (35, 'NNNNNN', true),
+   (36, 'NNNNN[-NNNN]', true),
+   (37, 'NNNNN[NN]', true),
+   (38, 'NNNNN[N]', true),
+   (39, 'NNNN[ AA]', true),
+   (40, 'NNNN[ NNNN]', true),
+   (41, 'NNNN[-A]', true),
+   (42, 'NNNN[-NNN]', true),
+   (43, 'NNNN[NN]', true),
+   (44, 'NNN[-NNN]', true),
+   (45, 'NNN[N]', true),
+   (46, 'XNNNN', true);
+INSERT INTO postal_code_formats (name, description)
+   SELECT 'template:' || template, 'Template ' || template FROM postal_code_templates WHERE builtin;
+INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
+   ('AD', 'template:CCNNN'),
+   ('AF', 'template:NNNN'),
+   ('AI', 'template:NNNN'),
+   ('AL', 'template:NNNN'),
+   ('AM', 'template:NNNN'),
+   ('AQ', 'template:AAAA NAA'),
+   ('AR', 'template:NNNN'),
+   ('AS', 'US'),
+   ('AT', 'template:NNNN'),
+   ('AU', 'template:NNNN'),
+   ('AX', 'template:NNNNN'),
+   ('AZ', 'template:CC NNNN'),
+   ('BA', 'template:NNNNN'),
+   ('BB', 'template:CCNNNNN'),
+   ('BD', 'template:NNNN'),
+   ('BE', 'template:NNNN'),
+   ('BG', 'template:NNNN'),
+   ('BH', 'template:NNN[N]'),
+   ('BL', 'FR'),
+   ('BM', 'template:AA XX'),
+   ('BN', 'template:AANNNN'),
+   ('BT', 'template:NNNNN'),
+   ('BY', 'template:NNNNNN'),
+   ('CC', 'template:NNNN'),
+   ('CH', 'template:NNNN'),
+   ('CL', 'template:NNN-NNNN'),
+   ('CN', 'template:NNNNNN'),
+   ('CO', 'template:NNNNNN'),
+   ('CR', 'template:NNNNN'),
+   ('CU', 'template:NNNNN'),
+   ('CV', 'template:NNNN'),
+   ('CX', 'template:NNNN'),
+   ('CY', 'template:NNNN'),
+   ('DE', 'template:NNNNN'),
+   ('DK', 'template:NNNN'),
+   ('DO', 'template:NNNNN'),
+   ('DZ', 'template:NNNNN'),
+   ('EC', 'template:NNNNNN'),
+   ('EE', 'template:NNNNN'),
+   ('EG', 'template:NNNNN[NN]'),
+   ('ES', 'template:NNNNN'),
+   ('ET', 'template:NNNN'),
+   ('FI', 'template:NNNNN'),
+   ('FK', 'template:AAAA NAA'),
+   ('FM', 'US'),
+   ('FO', 'template:NNN'),
+   ('GE', 'template:NNNN'),
+   ('GF', 'FR'),
+   ('GH', 'template:AXNNN[NN]'),
+   ('GI', 'GB'),
+   ('GL', 'template:NNNN'),
+   ('GN', 'template:NNN'),
+   ('GP', 'FR'),
+   ('GR', 'template:NNN NN'),
+   ('GS', 'template:AAAA NAA'),
+   ('GT', 'template:NNNNN'),
+   ('GU', 'US'),
+   ('GW', 'template:NNNN'),
+   ('HK', 'template:NNNNNN'),
+   ('HM', 'template:NNNN'),
+   ('HN', 'template:NNNNN'),
+   ('HR', 'template:NNNNN'),
+   ('HT', 'template:CCNNNN'),
+   ('HU', 'template:NNNN'),
+   ('ID', 'template:NNNNN'),
+   ('IL', 'template:NNNNN[NN]'),
+   ('IN', 'template:NNNNNN'),
+   ('IO', 'template:AAAA NAA'),
+   ('IQ', 'template:NNNNN'),
+   ('IR', 'template:NNNNN-NNNNN'),
+   ('IS', 'template:NNN'),
+   ('IT', 'template:NNNNN'),
+   ('JM', 'template:NN'),
+   ('JO', 'template:NNNNN'),
+   ('JP', 'template:NNN-NNNN'),
+   ('KE', 'template:NNNNN'),
+   ('KG', 'template:NNNNNN'),
+   ('KH', 'template:NNNNNN'),
+   ('KN', 'template:CCNNNN'),
+   ('KR', 'template:NNNNN'),
+   ('KW', 'template:NNNNN'),
+   ('KY', 'template:CCN-NNNN'),
+   ('KZ', 'template:NNNNNN'),
+   ('LA', 'template:NNNNN'),
+   ('LB', 'template:NNNN[ NNNN]'),
+   ('LC', 'template:CCNN NNN'),
+   ('LI', 'template:NNNN'),
+   ('LK', 'template:NNNNN'),
+   ('LR', 'template:NNNN'),
+   ('LS', 'template:NNN'),
+   ('LT', 'template:NNNNN'),
+   ('LV', 'template:NNNN'),
+   ('MA', 'template:NNNNN'),
+   ('MC', 'template:NNNNN'),
+   ('MD', 'template:NNNN'),
+   ('ME', 'template:NNNNN'),
+   ('MF', 'FR'),
+   ('MG', 'template:NNN'),
+   ('MH', 'US'),
+   ('MK', 'template:NNNN'),
+   ('MM', 'template:NNNNN[NN]'),
+   ('MN', 'template:NNNNN'),
+   ('MO', 'template:NNNNNN'),
+   ('MP', 'US'),
+   ('MQ', 'FR'),
+   ('MS', 'template:AAA NNNN'),
+   ('MT', 'template:AAA[ NNNN]'),
+   ('MU', 'template:XNNNN'),
+   ('MV', 'template:NNNNN'),
+   ('MW', 'template:NNNNNN'),
+   ('MX', 'template:NNNNN'),
+   ('MY', 'template:NNNNN'),
+   ('MZ', 'template:NNNN'),
+   ('NA', 'template:NNNNN'),
+   ('NC', 'FR'),
+   ('NE', 'template:NNNN'),
+   ('NF', 'template:NNNN'),
+   ('NG', 'template:NNNNNN'),
+   ('NI', 'template:NNNNN'),
+   ('NL', 'template:NNNN[ AA]'),
+   ('NO', 'template:NNNN'),
+   ('NP', 'template:NNNNN'),
+   ('NR', 'template:AAANN'),
+   ('NU', 'template:NNNN'),
+   ('NZ', 'template:NNNN'),
+   ('OM', 'template:NNN'),
+   ('PA', 'template:NNNNN'),
+   ('PE', 'template:NNNNN'),
+   ('PF', 'FR'),
+   ('PG', 'template:NNN'),
+   ('PH', 'template:NNNN'),
+   ('PK', 'template:NNNNN'),
+   ('PL', 'template:NN-NNN'),
+   ('PM', 'FR'),
+   ('PN', 'template:AAAA NAA'),
+   ('PR', 'US'),
+   ('PS', 'template:NNN'),
+   ('PT', 'template:NNNN[-NNN]'),
+   ('PW', 'US'),
+   ('PY', 'template:NNNN[NN]'),
+   ('RE', 'FR'),
+   ('RO', 'template:NNNNNN'),
+   ('RS', 'template:NNNNN'),
+   ('RU', 'template:NNNNNN'),
+   ('SA', 'template:NNNNN[-NNNN]'),
+   ('SD', 'template:NNNNN'),
+   ('SE', 'template:NNN NN'),
+   ('SG', 'template:NNNNNN'),
+   ('SH', 'template:AAAA NAA'),
+   ('SI', 'template:NNNN'),
+   ('SJ', 'template:NNNN'),
+   ('SK', 'template:NNN NN'),
+   ('SM', 'template:NNNNN'),
+   ('SN', 'template:NNNNN'),
+   ('SO', 'template:AA NNNNN'),
+   ('SV', 'template:NNNN'),
+   ('SZ', 'template:ANNN'),
+   ('TC', 'template:AAAA NAA'),
+   ('TH', 'template:NNNNN'),
+   ('TJ', 'template:NNNNNN'),
+   ('TM', 'template:NNNNNN'),
+   ('TN', 'template:NNNN'),
+   ('TR', 'template:NNNNN'),
+   ('TT', 'template:NNNNNN'),
+   ('TW', 'template:NNN[-NNN]'),
+   ('TZ', 'template:NNNNN'),
+   ('UA', 'template:NNNNN'),
+   ('UM', 'US'),
+   ('UY', 'template:NNNNN'),
+   ('UZ', 'template:NNNNNN'),
+   ('VA', 'template:NNNNN'),
+   ('VC', 'template:CCNNNN'),
+   ('VE', 'template:NNNN[-A]'),
+   ('VG', 'template:CCNNNN'),
+   ('VI', 'US'),
+   ('VN', 'template:NNNNN[N]'),
+   ('WF', 'FR'),
+   ('WS', 'template:CCNNNN'),
+   ('XK', 'template:NNNNN'),
+   ('YT', 'FR'),
+   ('ZA', 'template:NNNN'),
+   ('ZM', 'template:NNNNN');
+INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
+   ('AD', 'Andorra
+', 'GeoNames data', NULL),
+   ('AE', 'United Arab Emirates
+', 'no postal codes', 'no postal code system; the "postal codes" in GeoNames are coordinate-derived pairs, not codes'),
+   ('AF', 'Afghanistan
+', 'Wikipedia', NULL),
+   ('AG', 'Antigua and Barbuda
+', 'no postal codes', NULL),
+   ('AI', 'Anguilla
+', 'GeoNames data', NULL),
+   ('AL', 'Albania
+', 'GeoNames data', NULL),
+   ('AM', 'Armenia
+', 'Wikipedia', NULL),
+   ('AO', 'Angola
+', 'no postal codes', NULL),
+   ('AQ', 'British Antarctic Territory
+', 'Wikipedia', NULL),
+   ('AR', 'Argentina
+', 'see note', 'NNNN, the minimum and the form GeoNames has; the 1999 ANNNNAAA form (CPA) is not accepted'),
+   ('AS', 'American Samoa
+', 'GeoNames data', NULL),
+   ('AT', 'Austria
+', 'GeoNames data', NULL),
+   ('AU', 'Australia
+', 'GeoNames data', NULL),
+   ('AW', 'Aruba
+', 'no postal codes', NULL),
+   ('AX', 'Åland
+', 'GeoNames data', NULL),
+   ('AZ', 'Azerbaijan
+', 'GeoNames data', NULL),
+   ('BA', 'Bosnia and Herzegovina
+', 'Wikipedia', NULL),
+   ('BB', 'Barbados
+', 'Wikipedia', NULL),
+   ('BD', 'Bangladesh
+', 'GeoNames data', NULL),
+   ('BE', 'Belgium
+', 'GeoNames data', NULL),
+   ('BF', 'Burkina Faso
+', 'no postal codes', NULL),
+   ('BG', 'Bulgaria
+', 'GeoNames data', NULL),
+   ('BH', 'Bahrain
+', 'Wikipedia', NULL),
+   ('BI', 'Burundi
+', 'no postal codes', NULL),
+   ('BJ', 'Benin
+', 'no postal codes', NULL),
+   ('BL', 'Saint Barthélemy
+', 'Wikipedia', NULL),
+   ('BM', 'Bermuda
+', 'see note', 'AA NN; the second pair is sometimes letters, so X'),
+   ('BN', 'Brunei
+', 'Wikipedia', NULL),
+   ('BO', 'Bolivia
+', 'no postal codes', NULL),
+   ('BQ', 'Bonaire, Sint Eustatius and Saba
+', 'no postal codes', NULL),
+   ('BR', 'Brazil
+', 'built in', NULL),
+   ('BS', 'Bahamas
+', 'no postal codes', NULL),
+   ('BT', 'Bhutan
+', 'Wikipedia', NULL),
+   ('BV', 'Bouvet Island', 'no postal codes', NULL),
+   ('BW', 'Botswana
+', 'no postal codes', NULL),
+   ('BY', 'Belarus
+', 'GeoNames data', NULL),
+   ('BZ', 'Belize
+', 'no postal codes', NULL),
+   ('CA', 'Canada
+', 'built in', NULL),
+   ('CC', 'Cocos (Keeling) Island
+', 'GeoNames data', NULL),
+   ('CD', 'Congo, Democratic Republic
+', 'no postal codes', NULL),
+   ('CF', 'Central African Republic
+', 'no postal codes', NULL),
+   ('CG', 'Congo (Brazzaville)
+', 'no postal codes', NULL),
+   ('CH', 'Switzerland
+', 'GeoNames data', NULL),
+   ('CI', 'Côte d''Ivoire (Ivory Coast)
+', 'no postal codes', NULL),
+   ('CK', 'Cook Islands
+', 'no postal codes', NULL),
+   ('CL', 'Chile
+', 'GeoNames data', NULL),
+   ('CM', 'Cameroon
+', 'no postal codes', NULL),
+   ('CN', 'China
+', 'GeoNames data', NULL),
+   ('CO', 'Colombia
+', 'GeoNames data', NULL),
+   ('CR', 'Costa Rica
+', 'GeoNames data', NULL),
+   ('CU', 'Cuba
+', 'Wikipedia', NULL),
+   ('CV', 'Cape Verde
+', 'Wikipedia', NULL),
+   ('CW', 'Curaçao
+', 'no postal codes', NULL),
+   ('CX', 'Christmas Island
+', 'GeoNames data', NULL),
+   ('CY', 'Cyprus
+', 'GeoNames data', NULL),
+   ('CZ', 'Czech Republic
+', 'built in', NULL),
+   ('DE', 'Germany
+', 'GeoNames data', NULL),
+   ('DJ', 'Djibouti
+', 'no postal codes', NULL),
+   ('DK', 'Denmark
+', 'GeoNames data', NULL),
+   ('DM', 'Dominica
+', 'no postal codes', NULL),
+   ('DO', 'Dominican Republic
+', 'GeoNames data', NULL),
+   ('DZ', 'Algeria
+', 'GeoNames data', NULL),
+   ('EC', 'Ecuador
+', 'GeoNames data', NULL),
+   ('EE', 'Estonia
+', 'GeoNames data', NULL),
+   ('EG', 'Egypt
+', 'see note', 'Wikipedia says 7 digits, the post office uses 5; both accepted'),
+   ('EH', 'Western Sahara', 'no postal codes', NULL),
+   ('ER', 'Eritrea
+', 'no postal codes', NULL),
+   ('ES', 'Spain
+', 'GeoNames data', NULL),
+   ('ET', 'Ethiopia
+', 'Wikipedia', NULL),
+   ('FI', 'Finland
+', 'GeoNames data', NULL),
+   ('FJ', 'Fiji
+', 'no postal codes', NULL),
+   ('FK', 'Falkland Islands
+', 'GeoNames data', NULL),
+   ('FM', 'Micronesia
+', 'GeoNames data', NULL),
+   ('FO', 'Faroe Islands
+', 'GeoNames data', NULL),
+   ('FR', 'France
+', 'built in', NULL),
+   ('GA', 'Gabon
+', 'no postal codes', NULL),
+   ('GB', 'United Kingdom
+', 'built in', NULL),
+   ('GD', 'Grenada
+', 'no postal codes', NULL),
+   ('GE', 'Georgia
+', 'Wikipedia', NULL),
+   ('GF', 'French Guiana
+', 'GeoNames data', NULL),
+   ('GG', 'Guernsey
+', 'built in', NULL),
+   ('GH', 'Ghana
+', 'Wikipedia', NULL),
+   ('GI', 'Gibraltar
+', 'see note', 'GX11 1AA, the UK format'),
+   ('GL', 'Greenland
+', 'GeoNames data', NULL),
+   ('GM', 'Gambia
+', 'no postal codes', NULL),
+   ('GN', 'Guinea
+', 'Wikipedia', NULL),
+   ('GP', 'Guadeloupe
+', 'GeoNames data', NULL),
+   ('GQ', 'Equatorial Guinea
+', 'no postal codes', NULL),
+   ('GR', 'Greece
+', 'Wikipedia', NULL),
+   ('GS', 'South Georgia and the South Sandwich Islands
+', 'GeoNames data', NULL),
+   ('GT', 'Guatemala
+', 'GeoNames data', NULL),
+   ('GU', 'Guam
+', 'GeoNames data', NULL),
+   ('GW', 'Guinea Bissau
+', 'Wikipedia', NULL),
+   ('GY', 'Guyana
+', 'no postal codes', NULL),
+   ('HK', 'Hong Kong
+', 'see note', 'no postal codes; 999077 is the placeholder GeoNames carries'),
+   ('HM', 'Heard and McDonald Islands
+', 'GeoNames data', NULL),
+   ('HN', 'Honduras
+', 'GeoNames data', NULL),
+   ('HR', 'Croatia
+', 'GeoNames data', NULL),
+   ('HT', 'Haiti
+', 'GeoNames data', NULL),
+   ('HU', 'Hungary
+', 'GeoNames data', NULL),
+   ('ID', 'Indonesia
+', 'GeoNames data', NULL),
+   ('IE', 'Ireland
+', 'built in', NULL),
+   ('IL', 'Israel
+', 'see note', '7 digits since 2013; 5-digit codes are still widely used; both accepted'),
+   ('IM', 'Isle of Man
+', 'built in', NULL),
+   ('IN', 'India
+', 'GeoNames data', NULL),
+   ('IO', 'British Indian Ocean Territory
+', 'GeoNames data', NULL),
+   ('IQ', 'Iraq
+', 'Wikipedia', NULL),
+   ('IR', 'Iran
+', 'Wikipedia', NULL),
+   ('IS', 'Iceland
+', 'GeoNames data', NULL),
+   ('IT', 'Italy
+', 'GeoNames data', NULL),
+   ('JE', 'Jersey
+', 'built in', NULL),
+   ('JM', 'Jamaica
+', 'Wikipedia', NULL),
+   ('JO', 'Jordan
+', 'Wikipedia', NULL),
+   ('JP', 'Japan
+', 'GeoNames data', NULL),
+   ('KE', 'Kenya
+', 'GeoNames data', NULL),
+   ('KG', 'Kyrgyzstan
+', 'Wikipedia', NULL),
+   ('KH', 'Cambodia
+', 'Wikipedia', NULL),
+   ('KI', 'Kiribati
+', 'no postal codes', NULL),
+   ('KM', 'Comoros
+', 'no postal codes', NULL),
+   ('KN', 'Saint Kitts and Nevis
+', 'Wikipedia', NULL),
+   ('KP', 'Korea, North
+', 'no postal codes', NULL),
+   ('KR', 'Korea, South
+', 'GeoNames data', NULL),
+   ('KW', 'Kuwait
+', 'Wikipedia', NULL),
+   ('KY', 'Cayman Islands
+', 'Wikipedia', NULL),
+   ('KZ', 'Kazakhstan
+', 'Wikipedia', NULL),
+   ('LA', 'Laos
+', 'Wikipedia', NULL),
+   ('LB', 'Lebanon
+', 'Wikipedia', NULL),
+   ('LC', 'Saint Lucia
+', 'Wikipedia', NULL),
+   ('LI', 'Liechtenstein
+', 'GeoNames data', NULL),
+   ('LK', 'Sri Lanka
+', 'GeoNames data', NULL),
+   ('LR', 'Liberia
+', 'Wikipedia', NULL),
+   ('LS', 'Lesotho
+', 'Wikipedia', NULL),
+   ('LT', 'Lithuania
+', 'GeoNames data', NULL),
+   ('LU', 'Luxembourg
+', 'built in', NULL),
+   ('LV', 'Latvia
+', 'GeoNames data', NULL),
+   ('LY', 'Libya
+', 'no postal codes', NULL),
+   ('MA', 'Morocco
+', 'GeoNames data', NULL),
+   ('MC', 'Monaco
+', 'GeoNames data', NULL),
+   ('MD', 'Moldova
+', 'GeoNames data', NULL),
+   ('ME', 'Montenegro
+', 'Wikipedia', NULL),
+   ('MF', 'Saint Martin
+', 'Wikipedia', NULL),
+   ('MG', 'Madagascar
+', 'Wikipedia', NULL),
+   ('MH', 'Marshall Islands
+', 'GeoNames data', NULL),
+   ('MK', 'North Macedonia
+', 'GeoNames data', NULL),
+   ('ML', 'Mali
+', 'no postal codes', NULL),
+   ('MM', 'Myanmar
+', 'see note', 'Wikipedia says 7 digits, 5 are in use; both accepted'),
+   ('MN', 'Mongolia
+', 'Wikipedia', NULL),
+   ('MO', 'Macau
+', 'see note', 'no postal codes; 999078 is the placeholder GeoNames carries'),
+   ('MP', 'Northern Mariana Islands
+', 'GeoNames data', NULL),
+   ('MQ', 'Martinique
+', 'GeoNames data', NULL),
+   ('MR', 'Mauritania
+', 'no postal codes', NULL),
+   ('MS', 'Montserrat
+', 'Wikipedia', NULL),
+   ('MT', 'Malta
+', 'see note', 'the outcode alone (GeoNames has these), optionally with NNNN'),
+   ('MU', 'Mauritius
+', 'Wikipedia', NULL),
+   ('MV', 'Maldives
+', 'Wikipedia', NULL),
+   ('MW', 'Malawi
+', 'GeoNames data', NULL),
+   ('MX', 'Mexico
+', 'GeoNames data', NULL),
+   ('MY', 'Malaysia
+', 'GeoNames data', NULL),
+   ('MZ', 'Mozambique
+', 'Wikipedia', NULL),
+   ('NA', 'Namibia
+', 'Wikipedia', NULL),
+   ('NC', 'New Caledonia
+', 'GeoNames data', NULL),
+   ('NE', 'Niger
+', 'Wikipedia', NULL),
+   ('NF', 'Norfolk Island
+', 'GeoNames data', NULL),
+   ('NG', 'Nigeria
+', 'Wikipedia', NULL),
+   ('NI', 'Nicaragua
+', 'Wikipedia', NULL),
+   ('NL', 'Netherlands
+', 'see note', 'NNNN, optionally with the two letters; GeoNames has the four digits only'),
+   ('NO', 'Norway
+', 'GeoNames data', NULL),
+   ('NP', 'Nepal
+', 'Wikipedia', NULL),
+   ('NR', 'Nauru
+', 'GeoNames data', NULL),
+   ('NU', 'Niue
+', 'GeoNames data', NULL),
+   ('NZ', 'New Zealand
+', 'GeoNames data', NULL),
+   ('OM', 'Oman
+', 'Wikipedia', NULL),
+   ('PA', 'Panama
+', 'see note', 'Wikipedia says NNNN; GeoNames has five digits'),
+   ('PE', 'Peru
+', 'GeoNames data', NULL),
+   ('PF', 'French Polynesia
+', 'GeoNames data', NULL),
+   ('PG', 'Papua New Guinea
+', 'Wikipedia', NULL),
+   ('PH', 'Philippines
+', 'GeoNames data', NULL),
+   ('PK', 'Pakistan
+', 'GeoNames data', NULL),
+   ('PL', 'Poland
+', 'GeoNames data', NULL),
+   ('PM', 'Saint Pierre and Miquelon
+', 'GeoNames data', NULL),
+   ('PN', 'Pitcairn Islands
+', 'GeoNames data', NULL),
+   ('PR', 'Puerto Rico
+', 'GeoNames data', NULL),
+   ('PS', 'Palestine
+', 'Wikipedia', NULL),
+   ('PT', 'Portugal
+', 'GeoNames data', NULL),
+   ('PW', 'Palau
+', 'GeoNames data', NULL),
+   ('PY', 'Paraguay
+', 'Wikipedia', NULL),
+   ('QA', 'Qatar
+', 'no postal codes', NULL),
+   ('RE', 'Réunion
+', 'GeoNames data', NULL),
+   ('RO', 'Romania
+', 'GeoNames data', NULL),
+   ('RS', 'Serbia
+', 'GeoNames data', NULL),
+   ('RU', 'Russia
+', 'GeoNames data', NULL),
+   ('RW', 'Rwanda
+', 'no postal codes', NULL),
+   ('SA', 'Saudi Arabia
+', 'Wikipedia', NULL),
+   ('SB', 'Solomon Islands
+', 'no postal codes', NULL),
+   ('SC', 'Seychelles
+', 'no postal codes', NULL),
+   ('SD', 'Sudan
+', 'Wikipedia', NULL),
+   ('SE', 'Sweden
+', 'GeoNames data', NULL),
+   ('SG', 'Singapore
+', 'GeoNames data', NULL),
+   ('SH', 'Saint Helena, Ascension and Tristan da Cunha
+', 'Wikipedia', NULL),
+   ('SI', 'Slovenia
+', 'GeoNames data', NULL),
+   ('SJ', 'Svalbard and Jan Mayen
+', 'GeoNames data', NULL),
+   ('SK', 'Slovakia
+', 'GeoNames data', NULL),
+   ('SL', 'Sierra Leone
+', 'no postal codes', NULL),
+   ('SM', 'San Marino
+', 'GeoNames data', NULL),
+   ('SN', 'Senegal
+', 'Wikipedia', NULL),
+   ('SO', 'Somalia
+', 'Wikipedia', NULL),
+   ('SR', 'Suriname
+', 'no postal codes', NULL),
+   ('SS', 'South Sudan
+', 'no postal codes', NULL),
+   ('ST', 'São Tomé and Príncipe
+', 'no postal codes', NULL),
+   ('SV', 'El Salvador
+', 'Wikipedia', NULL),
+   ('SX', 'Sint Maarten
+', 'no postal codes', NULL),
+   ('SY', 'Syria
+', 'no postal codes', NULL),
+   ('SZ', 'Eswatini
+', 'Wikipedia', NULL),
+   ('TC', 'Turks and Caicos Islands
+', 'GeoNames data', NULL),
+   ('TD', 'Chad
+', 'no postal codes', NULL),
+   ('TF', 'French Southern and Antarctic Territories
+', 'no postal codes', NULL),
+   ('TG', 'Togo
+', 'no postal codes', NULL),
+   ('TH', 'Thailand
+', 'GeoNames data', NULL),
+   ('TJ', 'Tajikistan
+', 'Wikipedia', NULL),
+   ('TK', 'Tokelau
+', 'no postal codes', NULL),
+   ('TL', 'East Timor
+', 'no postal codes', NULL),
+   ('TM', 'Turkmenistan
+', 'Wikipedia', NULL),
+   ('TN', 'Tunisia
+', 'Wikipedia', NULL),
+   ('TO', 'Tonga
+', 'no postal codes', NULL),
+   ('TR', 'Turkey
+', 'GeoNames data', NULL),
+   ('TT', 'Trinidad and Tobago
+', 'Wikipedia', NULL),
+   ('TV', 'Tuvalu
+', 'no postal codes', NULL),
+   ('TW', 'Taiwan
+', 'Wikipedia', NULL),
+   ('TZ', 'Tanzania
+', 'Wikipedia', NULL),
+   ('UA', 'Ukraine
+', 'GeoNames data', NULL),
+   ('UG', 'Uganda
+', 'no postal codes', NULL),
+   ('UM', 'United States Minor Outlying Islands
+', 'Wikipedia', 'US ZIP (96898)'),
+   ('US', 'United States
+', 'built in', NULL),
+   ('UY', 'Uruguay
+', 'GeoNames data', NULL),
+   ('UZ', 'Uzbekistan
+', 'Wikipedia', NULL),
+   ('VA', 'Vatican
+', 'GeoNames data', NULL),
+   ('VC', 'Saint Vincent and the Grenadines
+', 'Wikipedia', NULL),
+   ('VE', 'Venezuela
+', 'Wikipedia', NULL),
+   ('VG', 'British Virgin Islands
+', 'Wikipedia', NULL),
+   ('VI', 'U.S. Virgin Islands
+', 'GeoNames data', NULL),
+   ('VN', 'Vietnam
+', 'see note', 'Wikipedia says 5 digits; 6 are in use since 2004; both accepted'),
+   ('VU', 'Vanuatu
+', 'no postal codes', NULL),
+   ('WF', 'Wallis and Futuna
+', 'GeoNames data', NULL),
+   ('WS', 'Samoa
+', 'see note', 'Wikipedia: CCNNNN; the one GeoNames row is American Samoa''s ZIP, filed under the wrong country'),
+   ('XK', 'Kosovo
+', 'Wikipedia', NULL),
+   ('YE', 'Yemen
+', 'no postal codes', NULL),
+   ('YT', 'Mayotte
+', 'GeoNames data', NULL),
+   ('ZA', 'South Africa
+', 'GeoNames data', NULL),
+   ('ZM', 'Zambia
+', 'Wikipedia', NULL),
+   ('ZW', 'Zimbabwe
+', 'no postal codes', NULL);
+-- END generated
+
+CREATE VIEW postal_code_world AS
+   SELECT i.iso2, i.name, f.format_name AS format, COALESCE(f.builtin, false) AS builtin, i.basis, i.note
+   FROM postal_code_iso_countries i
+   LEFT JOIN postal_code_country_formats f ON f.iso2 = i.iso2
+   ORDER BY i.iso2;
+COMMENT ON VIEW postal_code_world IS
+   'Every country and territory with the postal code format it is assigned (NULL if none) and where that came from. SELECT * FROM postal_code_world WHERE format IS NULL AND basis <> ''no postal codes'' lists any country still to be added.';
 
 
 -- A range of postal codes: a native PostgreSQL range type, so it comes with

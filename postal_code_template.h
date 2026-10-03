@@ -16,6 +16,10 @@
 //   X   a digit or a letter        0-9 then A-Z
 //   ' ' or '-'                     a literal separator, at a fixed position
 //   [ ... ]                        one optional group, at the very end
+//   CC                             (first, optionally followed by a separator) the
+//                                  country's own ISO letters, as in "VG1110" or
+//                                  "AZ 1000": optional on input, checked against the
+//                                  country, never stored, never written back
 //
 // so US ZIP+4 is "NNNNN[-NNNN]", the Czech PSC "NNN NN", Poland "NN-NNN",
 // the Netherlands "NNNN AA", Canada (without its letter exclusions) "ANA[ NAN]".
@@ -51,6 +55,7 @@ typedef struct {
    int      nitems;
    int      tail_at;                    // first position of the optional group; == nitems if none
    bool     has_tail;
+   bool     cc_prefix;                  // spec began "CC": the country's letters may precede the code
    uint64_t head_space;                 // distinct head values
    uint64_t tail_space;                 // distinct tail values (0 if none)
    uint64_t mult;                       // 1 + tail_space if there is a tail, else 1
@@ -61,6 +66,10 @@ typedef struct {
 // The template must fit the 48-bit payload.
 __attribute__((warn_unused_result))
 bool pc_template_compile (const char *spec, pc_template *t, char *err, size_t errlen);
+
+// Where the code proper starts in text that may begin with the country's own
+// letters (cc, upper case) when t->cc_prefix: past "VG", "VG ", "VG-"; else text itself.
+const char *pc_template_skip_cc (const pc_template *t, const char cc[2], const char *text);
 
 // The hooks, same contract as pc_encoder's (postal_code_fmt.h).
 __attribute__((warn_unused_result))

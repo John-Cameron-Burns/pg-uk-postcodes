@@ -44,9 +44,9 @@ typedef enum {
 // values with the slot, and a stored value finds its template again through
 // the slot -- so, like the compiled formats, a value is always decoded the way
 // it was written, and a template is immutable once it has a slot. They live
-// well above the compiled formats (which have room to grow, 1..15) and below
+// well above the compiled formats (which have room to grow, 1..11) and below
 // the end-of-country bound.
-#define PC_FMT_TEMPLATE_FIRST 16
+#define PC_FMT_TEMPLATE_FIRST 12
 #define PC_FMT_TEMPLATE_LAST  62
 
 // The format tag with every bit set is reserved and is never a real format:

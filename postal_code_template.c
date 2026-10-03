@@ -49,7 +49,16 @@ bool pc_template_compile (const char *spec, pc_template *t, char *err, size_t er
    bool in_group = false, closed = false;
    t->tail_at = -1;
 
-   for (const char *s = spec; *s; s++) {
+   // a leading "CC" is the country's own letters, not part of the code
+   const char *start = spec;
+   if (spec[0] == 'C' && spec[1] == 'C') {
+      t->cc_prefix = true;
+      start = spec + 2;
+      if (*start == ' ' || *start == '-') start++;   // "CC NNNN", "CC-NNNN"
+      if (!*start || *start == '[') return fail(err, errlen, "\"CC\" must be followed by the code itself");
+   }
+
+   for (const char *s = start; *s; s++) {
       if (closed) return fail(err, errlen, "nothing may follow the closing \"]\"");
       char c = *s;
       if (is_data(c) || is_literal(c)) {
@@ -75,7 +84,7 @@ bool pc_template_compile (const char *spec, pc_template *t, char *err, size_t er
          closed = true;
       } else {
          return fail(err, errlen, "a template is made of N (digit), A (letter), X (digit or letter), "
-                                  "separators ' ' and '-', and one optional [ ] group at the end");
+                                  "separators ' ' and '-', one optional [ ] group at the end, and CC first for the country's own letters");
       }
    }
    if (in_group && !closed) return fail(err, errlen, "missing \"]\"");
@@ -126,6 +135,17 @@ static bool scan (const pc_template *t, int from, int to, const char **sp, bool 
       (*count)++;
    }
    return true;
+}
+
+const char *pc_template_skip_cc (const pc_template *t, const char cc[2], const char *text) {
+   if (!t->cc_prefix || !text) return text;
+   char a = text[0], b = a ? text[1] : '\0';
+   if (a >= 'a' && a <= 'z') a = (char) (a - 32);
+   if (b >= 'a' && b <= 'z') b = (char) (b - 32);
+   if (a != cc[0] || b != cc[1]) return text;
+   text += 2;
+   if (*text == ' ' || *text == '-') text++;
+   return text;
 }
 
 bool pc_template_parse (const pc_template *t, const char *text, uint64_t *out) {
