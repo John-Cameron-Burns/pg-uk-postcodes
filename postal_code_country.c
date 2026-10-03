@@ -13,7 +13,8 @@
 // table is meant for day to day).
 static SPIPlanPtr country_format_plan = NULL;
 
-char *pc_lookup_country_format (const char iso2[2]) {
+char *pc_lookup_country_format (const char iso2[2], int *slot) {
+   *slot = -1;
    MemoryContext caller_context = CurrentMemoryContext;
    char cc[3] = { iso2[0], iso2[1], '\0' };
    char *result = NULL;
@@ -24,7 +25,9 @@ char *pc_lookup_country_format (const char iso2[2]) {
    if (!country_format_plan) {
       Oid argtypes[1] = { TEXTOID };
       SPIPlanPtr plan = SPI_prepare(
-         "SELECT format_name FROM postal_code_country_formats WHERE iso2 = $1",
+         "SELECT cf.format_name, t.slot FROM postal_code_country_formats cf "
+         "LEFT JOIN postal_code_templates t ON cf.format_name = 'template:' || t.template "
+         "WHERE cf.iso2 = $1",
          1, argtypes);
       if (!plan)
          ereport(ERROR, (errmsg("postal_code: failed to prepare country-format lookup (SPI error %d)",
@@ -47,6 +50,10 @@ char *pc_lookup_country_format (const char iso2[2]) {
          // tears down the context this Datum's text data lives in.
          char *spi_str = TextDatumGetCString(d);
          result = MemoryContextStrdup(caller_context, spi_str);
+
+         bool slot_null;
+         Datum sd = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &slot_null);
+         if (!slot_null) *slot = (int) DatumGetInt16(sd);
       }
    }
 

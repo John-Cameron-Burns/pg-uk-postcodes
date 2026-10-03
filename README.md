@@ -427,17 +427,58 @@ Which format a country uses is a live SQL table
 format that already exists needs no rebuild:
 
     SELECT add_country_format('DE', 'FR');   -- Germany: same plain 5-digit shape as FR/CZ
-    SELECT 'DE:12345'::postal_code;          -- works immediately, no extension reinstall
+    SELECT 'DE-12345'::postal_code;          -- works immediately, no extension reinstall
     SELECT remove_country_format('DE');      -- undo -- new DE text stops parsing, but
                                               -- values already stored as DE are unaffected
                                               -- (decoding uses the format bits already in
                                               -- the value, never a fresh lookup)
 
-`SELECT * FROM postal_code_formats` lists which formats actually have C
-behind them; `add_country_format()` raises if you name one that doesn't.
-Only a genuinely new format *shape* -- a new digit/letter grouping, new
-exclusion rules -- needs real C (in `postal_code_fmt.c` and a new
-`postal_code_fmt.h` tag) and a new extension version.
+`SELECT * FROM postal_code_formats` lists the formats a country can be assigned;
+`add_country_format()` raises if you name one that isn't there. A country whose
+codes are just fixed-width groups of digits and letters needs no C at all -- see
+the next section. Only a genuinely irregular format (Canada's excluded letters,
+Ireland's Eircode, the UK's area table) needs real C (in `postal_code_fmt.c` and a
+new `postal_code_fmt.h` tag) and a new extension version.
+
+### Templates: new countries without C
+
+    SELECT add_country_template('PL', 'NN-NNN');          -- Poland
+    SELECT add_country_template('NL', 'NNNN[ AA]');       -- Netherlands: 4 digits, optionally + 2 letters
+    SELECT add_country_template('JP', 'NNN[-NNNN]');      -- Japan
+    SELECT add_country_template('DE', 'NNNNN');           -- Germany (and, if you like, Spain, Italy, ...)
+    SELECT 'pl-00950'::postal_code;                       -- PL-00-950
+
+A template is written with `N` (a digit), `A` (a letter), `X` (either), the
+separators space and hyphen, and at most one optional `[ ... ]` group at the end.
+Separators are always written and optional on input, and letters are accepted in
+either case. Everything else works as for the built-in formats, with nothing more to
+configure: ordering is text ordering (`'PL-00-949' < 'PL-00-950'`, countries in ISO
+order), prefix ranges, `lower_bound`/`upper_bound`/`postal_prefix`, the `%` operator
+and index use, `outcode()`, `is_valid()`/`to_postal_code()`, the country lock, and
+binary send/receive.
+
+* **The optional group is the incode.** The part before it is a value of its own and
+  is the `outcode()`; it sorts just before every value that extends it (`NL-1012`
+  before `NL-1012 AA`). A template with no optional group has no outcode, like
+  France.
+* **No special rules.** A template cannot say "this letter is never used" or "0000
+  is not a real suffix": every combination its shape allows is valid. Where a
+  country needs that (the US rejects `-0000`; Canada excludes D, F, I, O, Q and U),
+  it takes a compiled encoder, or else a template that accepts a little too much.
+* **It must fit in 48 bits**, which allows e.g. 14 digits or 9 alphanumerics, and
+  `add_country_template()` says so if it doesn't.
+* **A template is permanent.** Each template occupies one of 47 slots
+  (`postal_code_templates`), and a stored value carries its slot as its format, so
+  it is always read the way it was written -- exactly as the built-in formats are.
+  Rows cannot be updated or deleted. To change a country's format, assign it a
+  *new* template: new values follow it, and values already stored go on reading as
+  they were written (and are different values -- `PL-00-950` under `NN-NNN` is not
+  equal to `PL-00950` under `NNNNN`). Countries with the same shape share a slot.
+* **Dump and restore.** `postal_code_templates` is dumped with the database,
+  because values can't be read without it. The *assignments* of countries to
+  formats (`postal_code_country_formats`) are not: after a restore, re-run
+  `add_country_template()` / `add_country_format()` for the countries you added,
+  which reuses the existing slots. Values already stored are unaffected.
 
 One consequence worth knowing: `postal_code_in`/`postal_code(text, text)`
 are declared `STABLE`, not `IMMUTABLE`, precisely because their result can

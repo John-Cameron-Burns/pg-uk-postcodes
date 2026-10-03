@@ -28,6 +28,7 @@
 #include "postal_code.h"
 #include "postal_code_fmt.h"
 #include "postal_code_country.h"
+#include "postal_code_tpl.h"
 
 #ifndef EXTVERSION
 #error  EXTVERSION is not defined
@@ -72,6 +73,7 @@ Datum postal_code_typmod_in (PG_FUNCTION_ARGS);
 Datum postal_code_typmod_out (PG_FUNCTION_ARGS);
 Datum postal_code_enforce (PG_FUNCTION_ARGS);
 Datum postal_code_formats_changed (PG_FUNCTION_ARGS);
+Datum postal_code_template_check (PG_FUNCTION_ARGS);
 Datum postal_code_lenient_text (PG_FUNCTION_ARGS);
 Datum postal_code_country  (PG_FUNCTION_ARGS);
 
@@ -99,10 +101,11 @@ static pc_format lookup_country_try (const char *cc, size_t len, char out_iso2[2
    out_iso2[0] = c0;
    out_iso2[1] = c1;
 
-   *format_name = pc_lookup_country_format(out_iso2);
+   int slot;
+   *format_name = pc_lookup_country_format(out_iso2, &slot);
    if (!*format_name) { *why = LC_NO_ASSIGNMENT; return PC_FMT_UNKNOWN; }
 
-   pc_format fmt = pc_format_by_name(*format_name);
+   pc_format fmt = slot >= 0 ? (pc_format) slot : pc_format_by_name(*format_name);
    if (fmt == PC_FMT_UNKNOWN) *why = LC_FORMAT_MISSING;
    return fmt;
 }
@@ -125,6 +128,56 @@ static void lookup_country_raise (lc_result why, const char *cc, size_t len,
    case LC_OK:
       break;
    }
+}
+
+// ---- format dispatch ----------------------------------------------------------
+// A format tag is either a compiled encoder (postal_code_fmt.c) or a slot in
+// the postal_code_templates table (postal_code_template.h). Everything below
+// goes through these so it need not care which. A tag that is neither (a
+// slot the table has no row for, or garbage in a binary value) does not
+// resolve.
+typedef struct {
+   const pc_encoder *enc;   // NULL for a template
+   pc_template       tpl;
+} fmt_impl;
+
+static bool fmt_resolve (pc_format fmt, fmt_impl *f) {
+   f->enc = NULL;
+   if (fmt > PC_FMT_UNKNOWN && fmt < PC_FMT_MAX && pc_formats[fmt]) { f->enc = pc_formats[fmt]; return true; }
+   return pc_template_for_slot((int) fmt, &f->tpl);
+}
+
+// A format that has to resolve because a country was just assigned to it:
+// failing is a configuration fault.
+static void fmt_resolve_or_raise (pc_format fmt, fmt_impl *f) {
+   if (!fmt_resolve(fmt, f))
+      ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+                      errmsg (_("postal code format %d is not defined"), (int) fmt),
+                      errhint(_("a template slot needs a row in postal_code_templates"))));
+}
+
+static const char *fmt_describe (const fmt_impl *f) {
+   return f->enc ? f->enc->name : psprintf("template \"%s\"", f->tpl.spec);
+}
+static size_t fmt_max_text_len (const fmt_impl *f) { return f->enc ? f->enc->max_text_len : (size_t) f->tpl.nitems; }
+
+static bool fmt_parse_valid (const fmt_impl *f, const char *text, uint64_t *payload) {
+   if (f->enc) return f->enc->parse(text, false, payload) && f->enc->valid(*payload);
+   return pc_template_parse(&f->tpl, text, payload);
+}
+static int fmt_render (const fmt_impl *f, uint64_t payload, char *buf) {
+   return f->enc ? f->enc->render(payload, buf) : pc_template_render(&f->tpl, payload, buf);
+}
+static bool fmt_valid (const fmt_impl *f, uint64_t payload) {
+   return f->enc ? f->enc->valid(payload) : pc_template_valid(&f->tpl, payload);
+}
+static bool fmt_has_range (const fmt_impl *f) { return f->enc ? f->enc->range != NULL : true; }
+static bool fmt_range (const fmt_impl *f, const char *frag, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+   return f->enc ? f->enc->range(frag, lo, hi, unbounded) : pc_template_range(&f->tpl, frag, lo, hi, unbounded);
+}
+static bool fmt_has_outcode (const fmt_impl *f) { return f->enc ? f->enc->outcode != NULL : f->tpl.has_tail; }
+static uint64_t fmt_outcode (const fmt_impl *f, uint64_t payload) {
+   return f->enc ? f->enc->outcode(payload) : pc_template_outcode(&f->tpl, payload);
 }
 
 // Shared by postal_code_in() and postal_code_from_parts(): always either
@@ -221,13 +274,14 @@ Datum postal_code_in (PG_FUNCTION_ARGS) {
 
    char iso2[2];
    pc_format fmt = lookup_country(country, 2, iso2);
+   fmt_impl f;
+   fmt_resolve_or_raise(fmt, &f);
 
    uint64_t payload;
-   if (! pc_formats[fmt]->parse(national, false, &payload) ||
-       ! pc_formats[fmt]->valid(payload))
+   if (! fmt_parse_valid(&f, national, &payload))
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       errmsg (_("cannot parse \"%s\" as a %s postal code"),
-                              national, pc_formats[fmt]->name)));
+                              national, fmt_describe(&f))));
 
    PG_RETURN_POSTAL_CODE(pc_assemble(iso2, fmt, payload));
 }
@@ -248,16 +302,17 @@ Datum postal_code_out (PG_FUNCTION_ARGS) {
       PG_RETURN_CSTRING(end);
    }
 
-   if (fmt == PC_FMT_UNKNOWN || fmt >= PC_FMT_MAX || !pc_formats[fmt])
+   fmt_impl f;
+   if (!fmt_resolve(fmt, &f))
       ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
                       errmsg (_("cannot render corrupted binary data to text"))));
 
    char iso2[2];
    pc_unpack_country((uint16_t) GET_COUNTRY(pc), iso2);
 
-   char *out = palloc(3 + pc_formats[fmt]->max_text_len + 1); // "CC-" + code + NUL
+   char *out = palloc(3 + fmt_max_text_len(&f) + 1); // "CC-" + code + NUL
    int n = sprintf(out, "%c%c-", iso2[0], iso2[1]);
-   pc_formats[fmt]->render(GET_PAYLOAD(pc), out + n);
+   fmt_render(&f, GET_PAYLOAD(pc), out + n);
 
    PG_RETURN_CSTRING(out);
 }
@@ -272,9 +327,9 @@ Datum postal_code_recv (PG_FUNCTION_ARGS) {
    uint16_t country = (uint16_t) GET_COUNTRY(pc);
    bool end_bound = fmt == PC_FMT_END && GET_PAYLOAD(pc) == 0 &&
                     (country >> PC_LETTER_BITS) < 26 && (country & ((1 << PC_LETTER_BITS) - 1)) < 26;
+   fmt_impl f;
    if (!end_bound &&
-       (fmt == PC_FMT_UNKNOWN || fmt >= PC_FMT_MAX || !pc_formats[fmt] ||
-        ! pc_formats[fmt]->valid(GET_PAYLOAD(pc))))
+       (!fmt_resolve(fmt, &f) || ! fmt_valid(&f, GET_PAYLOAD(pc))))
       ereport(ERROR, (errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
                       errmsg (_("received binary data is invalid for type postal_code")),
                       errhint(_("server binary format version is %s"), STR(EXTVERSION))));
@@ -412,11 +467,13 @@ Datum postal_code_from_parts (PG_FUNCTION_ARGS) {
    char iso2[2];
    pc_format fmt = lookup_country(country, 2, iso2);
 
+   fmt_impl f;
+   fmt_resolve_or_raise(fmt, &f);
+
    uint64_t payload;
-   if (! pc_formats[fmt]->parse(national, false, &payload) ||
-       ! pc_formats[fmt]->valid(payload))
+   if (! fmt_parse_valid(&f, national, &payload))
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      errmsg (_("cannot parse \"%s\" as a %s postal code"), national, pc_formats[fmt]->name)));
+                      errmsg (_("cannot parse \"%s\" as a %s postal code"), national, fmt_describe(&f))));
 
    PG_RETURN_POSTAL_CODE(pc_assemble(iso2, fmt, payload));
 }
@@ -445,10 +502,11 @@ static bool lenient_build (const char *postcode, const char *cc, postal_code *ou
    if (why == LC_BAD_SHAPE || why == LC_NO_ASSIGNMENT) return false;
    if (why != LC_OK) lookup_country_raise(why, country, 2, iso2, format_name);
 
+   fmt_impl f;
+   fmt_resolve_or_raise(fmt, &f);
+
    uint64_t payload;
-   if (! pc_formats[fmt]->parse(national, false, &payload) ||
-       ! pc_formats[fmt]->valid(payload))
-      return false;
+   if (! fmt_parse_valid(&f, national, &payload)) return false;
 
    *out = pc_assemble(iso2, fmt, payload);
    return true;
@@ -492,14 +550,17 @@ static pc_format fragment_range (const char *str, char iso2[2], uint64_t *lo, ui
 
    pc_format fmt = lookup_country(str, 2, iso2);
 
-   if (!pc_formats[fmt]->range)
-      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      errmsg (_("the %s postal code format does not support ranges"), pc_formats[fmt]->name)));
+   fmt_impl f;
+   fmt_resolve_or_raise(fmt, &f);
 
-   if (! pc_formats[fmt]->range(hyphen + 1, lo, hi, unbounded))
+   if (!fmt_has_range(&f))
+      ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      errmsg (_("the %s postal code format does not support ranges"), fmt_describe(&f))));
+
+   if (! fmt_range(&f, hyphen + 1, lo, hi, unbounded))
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       errmsg (_("cannot parse \"%s\" as a fragment of a %s postal code"),
-                              hyphen + 1, pc_formats[fmt]->name)));
+                              hyphen + 1, fmt_describe(&f))));
    return fmt;
 }
 
@@ -611,11 +672,14 @@ static bool fragment_range_try (const char *str, char iso2[2], pc_format *fmt,
    lc_result why;
    char *format_name;
    *fmt = lookup_country_try(str, 2, iso2, &why, &format_name);
-   if (why != LC_OK || !pc_formats[*fmt]->range) return false;
+   if (why != LC_OK) return false;
+   fmt_impl f;
+   fmt_resolve_or_raise(*fmt, &f);
+   if (!fmt_has_range(&f)) return false;
 
    uint64_t lo, hi = 0;
    bool unbounded;
-   if (! pc_formats[*fmt]->range(hyphen + 1, &lo, &hi, &unbounded)) return false;
+   if (! fmt_range(&f, hyphen + 1, &lo, &hi, &unbounded)) return false;
 
    *lo_pc = pc_assemble(iso2, *fmt, lo);
    *hi_pc = pc_assemble(iso2, unbounded ? (pc_format) PC_FMT_END : *fmt, unbounded ? 0 : hi);
@@ -749,6 +813,25 @@ Datum postal_code_formats_changed (PG_FUNCTION_ARGS) {
 }
 
 
+// Validates a template (postal_code_template.h) and returns it in canonical
+// form, or raises saying what is wrong with it. add_country_template() runs
+// every template through this before it gets a slot.
+PG_FUNCTION_INFO_V1(postal_code_template_check);
+
+Datum postal_code_template_check (PG_FUNCTION_ARGS) {
+   char *spec = text_to_cstring(PG_GETARG_TEXT_PP(0));
+   pc_template t;
+   char err[160];
+
+   if (!pc_template_compile(spec, &t, err, sizeof err))
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                      errmsg (_("invalid postal code template \"%s\": %s"), spec, err),
+                      errhint(_("N is a digit, A a letter, X either; ' ' and '-' are separators; one optional [ ] group may end it, e.g. \"NNNNN[-NNNN]\""))));
+
+   PG_RETURN_TEXT_P(cstring_to_text(t.spec));
+}
+
+
 // outcode(pc) / district(pc): the area part of a postcode, as a complete
 // valid postcode of its own ('GB-SW1A 1AA' -> 'GB-SW1A'). NULL where the
 // format has no distinct outcode (FR, CZ, LU) and for the end-of-country
@@ -761,10 +844,11 @@ Datum postal_code_outcode (PG_FUNCTION_ARGS) {
    postal_code pc = PG_GETARG_POSTAL_CODE(0);
    pc_format fmt = (pc_format) GET_FORMAT(pc);
 
-   if (fmt == PC_FMT_UNKNOWN || fmt >= PC_FMT_MAX || !pc_formats[fmt] || !pc_formats[fmt]->outcode)
+   fmt_impl f;
+   if (!fmt_resolve(fmt, &f) || !fmt_has_outcode(&f))
       PG_RETURN_NULL();
 
-   SET_PAYLOAD(pc, pc_formats[fmt]->outcode(GET_PAYLOAD(pc)));
+   SET_PAYLOAD(pc, fmt_outcode(&f, GET_PAYLOAD(pc)));
    PG_RETURN_POSTAL_CODE(pc);
 }
 

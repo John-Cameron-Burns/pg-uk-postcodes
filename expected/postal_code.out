@@ -1256,6 +1256,497 @@ SELECT is_valid('12345', 'ZZ') AS can_anything_be_valid_there;
  f
 (1 row)
 
+-- ===== Templated formats =====================================================
+-- A country made of fixed-width digit/letter groups needs only an SQL row.
+--
+-- First, a template that was rolled back must not be remembered. Slot 16 is
+-- NNN in the first transaction and AAA in the second, and the backend caches
+-- what a slot means; the second must not see the first.
+BEGIN;
+SELECT add_country_template('PL', 'NNN');
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT 'PL-123'::postal_code;
+ postal_code 
+-------------
+ PL-123
+(1 row)
+
+ROLLBACK;
+BEGIN;
+SELECT add_country_template('PL', 'AAA');
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT 'PL-ABC'::postal_code;
+ postal_code 
+-------------
+ PL-ABC
+(1 row)
+
+SAVEPOINT s;
+SELECT 'PL-123'::postal_code;
+ERROR:  cannot parse "123" as a template "AAA" postal code
+LINE 1: SELECT 'PL-123'::postal_code;
+               ^
+ROLLBACK TO s;
+ROLLBACK;
+SELECT 'PL-ABC'::postal_code;
+ERROR:  "PL" is not a supported country code
+LINE 1: SELECT 'PL-ABC'::postal_code;
+               ^
+HINT:  see postal_code_country_formats, or add one with add_country_format()
+SELECT count(*) AS slots_in_use_after_rollbacks FROM postal_code_templates;
+ slots_in_use_after_rollbacks 
+------------------------------
+                            0
+(1 row)
+
+-- templates that are not templates
+SELECT postal_code_template_check('NNNNN[-NNNN]') AS ok, postal_code_template_check('X') AS also_ok;
+      ok      | also_ok 
+--------------+---------
+ NNNNN[-NNNN] | X
+(1 row)
+
+SELECT postal_code_template_check('');
+ERROR:  invalid postal code template "": a template cannot be empty
+HINT:  N is a digit, A a letter, X either; ' ' and '-' are separators; one optional [ ] group may end it, e.g. "NNNNN[-NNNN]"
+SELECT postal_code_template_check('nn');
+ERROR:  invalid postal code template "nn": a template is made of N (digit), A (letter), X (digit or letter), separators ' ' and '-', and one optional [ ] group at the end
+HINT:  N is a digit, A a letter, X either; ' ' and '-' are separators; one optional [ ] group may end it, e.g. "NNNNN[-NNNN]"
+SELECT postal_code_template_check('NN-');
+ERROR:  invalid postal code template "NN-": a separator must be followed by a letter or digit, or be the first thing inside [ ]
+HINT:  N is a digit, A a letter, X either; ' ' and '-' are separators; one optional [ ] group may end it, e.g. "NNNNN[-NNNN]"
+SELECT postal_code_template_check('NN[N');
+ERROR:  invalid postal code template "NN[N": missing "]"
+HINT:  N is a digit, A a letter, X either; ' ' and '-' are separators; one optional [ ] group may end it, e.g. "NNNNN[-NNNN]"
+SELECT postal_code_template_check('NN[N][N]');
+ERROR:  invalid postal code template "NN[N][N]": nothing may follow the closing "]"
+HINT:  N is a digit, A a letter, X either; ' ' and '-' are separators; one optional [ ] group may end it, e.g. "NNNNN[-NNNN]"
+SELECT postal_code_template_check('XXXXXXXXXX');
+ERROR:  invalid postal code template "XXXXXXXXXX": template does not fit in the 48 bits available
+HINT:  N is a digit, A a letter, X either; ' ' and '-' are separators; one optional [ ] group may end it, e.g. "NNNNN[-NNNN]"
+\set VERBOSITY terse
+SELECT add_country_template('PL', 'NN?');
+ERROR:  invalid postal code template "NN?": a template is made of N (digit), A (letter), X (digit or letter), separators ' ' and '-', and one optional [ ] group at the end
+SELECT add_country_template('PLX', 'NN');
+ERROR:  country code must be exactly two letters, got PLX
+\set VERBOSITY default
+-- Assigning countries. These persist until the end of the section (the
+-- templates themselves are permanent), so the checks below can fail freely.
+SELECT add_country_template('PL', 'NN-NNN');
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT add_country_template('NL', 'NNNN AA');
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT add_country_template('SE', 'NNN NN');
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT add_country_template('MC', 'NNNNN[-NNNN]');
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT add_country_template('AT', 'NNNN');
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT add_country_template('DE', 'NNNN');      -- the same shape shares a slot
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT add_country_template('pl', 'NN-NNN');    -- cc is normalised; same template, same slot
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT slot, template FROM postal_code_templates ORDER BY slot;
+ slot |   template   
+------+--------------
+   16 | NN-NNN
+   17 | NNNN AA
+   18 | NNN NN
+   19 | NNNNN[-NNNN]
+   20 | NNNN
+(5 rows)
+
+SELECT iso2, format_name FROM postal_code_country_formats WHERE format_name LIKE 'template:%' ORDER BY iso2;
+ iso2 |      format_name      
+------+-----------------------
+ AT   | template:NNNN
+ DE   | template:NNNN
+ MC   | template:NNNNN[-NNNN]
+ NL   | template:NNNN AA
+ PL   | template:NN-NNN
+ SE   | template:NNN NN
+(6 rows)
+
+-- in, out, either case, separators optional
+SELECT 'PL-00-950'::postal_code AS a, 'pl-00950'::postal_code AS b, postal_code('00-950', 'PL') AS c, postal_code('00950', 'PL') AS d;
+     a     |     b     |     c     |     d     
+-----------+-----------+-----------+-----------
+ PL-00-950 | PL-00-950 | PL-00-950 | PL-00-950
+(1 row)
+
+SELECT 'NL-1012 jl'::postal_code AS a, 'NL-1012JL'::postal_code AS b;
+     a      |     b      
+------------+------------
+ NL-1012 JL | NL-1012 JL
+(1 row)
+
+SELECT 'SE-114 55'::postal_code, 'MC-98000'::postal_code AS bare, 'MC-98000-0001'::postal_code AS plus4;
+ postal_code |   bare   |     plus4     
+-------------+----------+---------------
+ SE-114 55   | MC-98000 | MC-98000-0001
+(1 row)
+
+SELECT 'MC-98000-0000'::postal_code AS zeros_are_fine_in_a_template;
+ zeros_are_fine_in_a_template 
+------------------------------
+ MC-98000-0000
+(1 row)
+
+-- bad input says why
+SELECT 'PL-0O-950'::postal_code;
+ERROR:  cannot parse "0O-950" as a template "NN-NNN" postal code
+LINE 1: SELECT 'PL-0O-950'::postal_code;
+               ^
+SELECT 'PL-00-9500'::postal_code;
+ERROR:  cannot parse "00-9500" as a template "NN-NNN" postal code
+LINE 1: SELECT 'PL-00-9500'::postal_code;
+               ^
+SELECT 'PL-00-95'::postal_code;
+ERROR:  cannot parse "00-95" as a template "NN-NNN" postal code
+LINE 1: SELECT 'PL-00-95'::postal_code;
+               ^
+SELECT 'NL-1012 J'::postal_code;
+ERROR:  cannot parse "1012 J" as a template "NNNN AA" postal code
+LINE 1: SELECT 'NL-1012 J'::postal_code;
+               ^
+SELECT 'NL-1012 11'::postal_code;
+ERROR:  cannot parse "1012 11" as a template "NNNN AA" postal code
+LINE 1: SELECT 'NL-1012 11'::postal_code;
+               ^
+SELECT 'MC-98000-'::postal_code;
+ERROR:  cannot parse "98000-" as a template "NNNNN[-NNNN]" postal code
+LINE 1: SELECT 'MC-98000-'::postal_code;
+               ^
+SELECT to_postal_code('PL-00-9500') AS null_not_error, is_valid('PL-00-950') AS yes, is_valid('PL-00-95') AS no;
+ null_not_error | yes | no 
+----------------+-----+----
+                | t   | f
+(1 row)
+
+-- ordering is text ordering; a coarser value sorts before the finer ones, and
+-- countries stay in ISO order whichever kind of format they use
+SELECT pc FROM (VALUES ('MC-98000-0001'), ('MC-98000'), ('MC-97999-9999'), ('MC-98001'), ('MC-98000-0000'),
+                       ('NL-1012 JL'), ('NL-1012 JA'), ('NL-1011 ZZ'), ('MC-~'), ('PL-00-950'), ('PL-00-949'),
+                       ('GB-SW1A'), ('AT-1010'), ('US-90210')) v(t), LATERAL (SELECT t::postal_code AS pc) x
+ORDER BY pc;
+      pc       
+---------------
+ AT-1010
+ GB-SW1A
+ MC-97999-9999
+ MC-98000
+ MC-98000-0000
+ MC-98000-0001
+ MC-98001
+ MC-~
+ NL-1011 ZZ
+ NL-1012 JA
+ NL-1012 JL
+ PL-00-949
+ PL-00-950
+ US-90210
+(14 rows)
+
+-- outcode: the part before the optional group, if the template has one
+SELECT pc, outcode(pc) AS outcode, district(pc) AS district
+FROM (VALUES ('MC-98000-0001'), ('MC-98000'), ('PL-00-950'), ('NL-1012 JL')) v(t), LATERAL (SELECT t::postal_code AS pc) x;
+      pc       | outcode  | district 
+---------------+----------+----------
+ MC-98000-0001 | MC-98000 | MC-98000
+ MC-98000      | MC-98000 | MC-98000
+ PL-00-950     |          | 
+ NL-1012 JL    |          | 
+(4 rows)
+
+SELECT outcode(outcode('MC-98000-0001')) = outcode('MC-98000-0001') AS idempotent;
+ idempotent 
+------------
+ t
+(1 row)
+
+-- fragments, bounds and ranges, as for the compiled formats
+SELECT lower_bound('PL-00') AS lo, upper_bound('PL-00') AS hi;
+    lo     |    hi     
+-----------+-----------
+ PL-00-000 | PL-01-000
+(1 row)
+
+SELECT lower_bound('PL-00-9') AS lo, upper_bound('PL-00-9') AS hi;
+    lo     |    hi     
+-----------+-----------
+ PL-00-900 | PL-01-000
+(1 row)
+
+SELECT lower_bound('PL-99') AS lo, upper_bound('PL-99') AS hi_is_the_end_of_the_country;
+    lo     | hi_is_the_end_of_the_country 
+-----------+------------------------------
+ PL-99-000 | PL-~
+(1 row)
+
+SELECT lower_bound('NL-10') AS lo, upper_bound('NL-10') AS hi;
+     lo     |     hi     
+------------+------------
+ NL-1000 AA | NL-1100 AA
+(1 row)
+
+SELECT lower_bound('NL-1012 J') AS lo, upper_bound('NL-1012 J') AS hi;
+     lo     |     hi     
+------------+------------
+ NL-1012 JA | NL-1012 KA
+(1 row)
+
+SELECT lower_bound('NL-1012 ZZ') AS lo, upper_bound('NL-1012 ZZ') AS hi;
+     lo     |     hi     
+------------+------------
+ NL-1012 ZZ | NL-1013 AA
+(1 row)
+
+SELECT lower_bound('MC-98000') AS lo, upper_bound('MC-98000') AS hi;
+    lo    |    hi    
+----------+----------
+ MC-98000 | MC-98001
+(1 row)
+
+SELECT lower_bound('MC-98000-') AS lo, upper_bound('MC-98000-') AS hi;
+    lo    |    hi    
+----------+----------
+ MC-98000 | MC-98001
+(1 row)
+
+SELECT lower_bound('MC-98000-12') AS lo, upper_bound('MC-98000-12') AS hi;
+      lo       |      hi       
+---------------+---------------
+ MC-98000-1200 | MC-98000-1300
+(1 row)
+
+SELECT lower_bound('MC-98000-9999') AS lo, upper_bound('MC-98000-9999') AS hi;
+      lo       |    hi    
+---------------+----------
+ MC-98000-9999 | MC-98001
+(1 row)
+
+SELECT lower_bound('MC-99999-99') AS lo, upper_bound('MC-99999-99') AS hi_is_the_end_of_the_country;
+      lo       | hi_is_the_end_of_the_country 
+---------------+------------------------------
+ MC-99999-9900 | MC-~
+(1 row)
+
+SELECT postal_prefix('SE-11') AS r, 'SE-114 55'::postal_code <@ postal_prefix('SE-11') AS inside;
+             r             | inside 
+---------------------------+--------
+ ["SE-110 00","SE-120 00") | t
+(1 row)
+
+SELECT lower_bound('PL-00-9500');
+ERROR:  cannot parse "00-9500" as a fragment of a template "NN-NNN" postal code
+SELECT lower_bound('PL-A');
+ERROR:  cannot parse "A" as a fragment of a template "NN-NNN" postal code
+SELECT lower_bound('NL-1012 JLX');
+ERROR:  cannot parse "1012 JLX" as a fragment of a template "NNNN AA" postal code
+-- partial match
+SELECT 'MC-98000-0001'::postal_code % 'MC-98', 'MC-98000'::postal_code % 'MC-98000-', 'MC-97999'::postal_code % 'MC-98',
+       'NL-1012 JL'::postal_code % 'NL-1012 J', 'NL-1012 JL'::postal_code !% 'NL-1013', 'PL-00-950'::postal_code % 'PL-0';
+ ?column? | ?column? | ?column? | ?column? | ?column? | ?column? 
+----------+----------+----------+----------+----------+----------
+ t        | t        | f        | t        | t        | t
+(1 row)
+
+-- all of it over an index
+CREATE TEMP TABLE zips (id serial, pc postal_code);
+INSERT INTO zips (pc) SELECT postal_code(lpad(g::text, 5, '0'), 'MC') FROM generate_series(95000, 99999, 7) g;
+INSERT INTO zips (pc) SELECT postal_code(lpad((95000 + g)::text, 5, '0') || '-' || lpad(g::text, 4, '0'), 'MC') FROM generate_series(1, 4000, 13) g;
+CREATE INDEX ON zips (pc);
+ANALYZE zips;
+SELECT count(*) AS by_range FROM zips WHERE pc <@ postal_prefix('MC-9812');
+ by_range 
+----------
+        3
+(1 row)
+
+SELECT count(*) AS by_text  FROM zips WHERE pc::text LIKE 'MC-9812%';
+ by_text 
+---------
+       3
+(1 row)
+
+SELECT count(*) AS by_op    FROM zips WHERE pc % 'MC-9812';
+ by_op 
+-------
+     3
+(1 row)
+
+SELECT count(*) AS plus4s   FROM zips WHERE pc % 'MC-96000-0';
+ plus4s 
+--------
+      0
+(1 row)
+
+SELECT count(*) AS by_text  FROM zips WHERE pc::text LIKE 'MC-96000-0%';
+ by_text 
+---------
+       0
+(1 row)
+
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF) SELECT * FROM zips WHERE pc <@ postal_prefix('MC-9812');
+                                     QUERY PLAN                                     
+------------------------------------------------------------------------------------
+ Index Scan using zips_pc_idx on zips
+   Index Cond: ((pc >= 'MC-98120'::postal_code) AND (pc < 'MC-98130'::postal_code))
+(2 rows)
+
+RESET enable_seqscan;
+-- a column locked to a templated country
+CREATE TEMP TABLE pl (pc postal_code('PL'));
+INSERT INTO pl VALUES ('PL-00-950');
+COPY pl FROM stdin;
+INSERT INTO pl VALUES ('NL-1012 JL');
+ERROR:  postal code of country "NL" does not match the column's country "PL"
+HINT:  the column is declared postal_code('PL')
+SELECT pc FROM pl ORDER BY pc;
+    pc     
+-----------
+ PL-00-950
+ PL-01-001
+(2 rows)
+
+-- a country moves to a different template: new values follow the new one, values
+-- already stored go on reading as they were written
+CREATE TEMP TABLE pl_old AS SELECT 'PL-00-950'::postal_code AS pc;
+SELECT add_country_template('PL', 'NNNNN');
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT 'PL-00950'::postal_code AS new_style;
+ new_style 
+-----------
+ PL-00950
+(1 row)
+
+SELECT 'PL-00-950'::postal_code;
+ERROR:  cannot parse "00-950" as a template "NNNNN" postal code
+LINE 1: SELECT 'PL-00-950'::postal_code;
+               ^
+SELECT pc AS still_reads_as_written, outcode(pc) IS NULL AS no_outcode FROM pl_old;
+ still_reads_as_written | no_outcode 
+------------------------+------------
+ PL-00-950              | t
+(1 row)
+
+SELECT pc = 'PL-00950'::postal_code AS different_format_different_value FROM pl_old;
+ different_format_different_value 
+----------------------------------
+ f
+(1 row)
+
+SELECT slot, template FROM postal_code_templates ORDER BY slot;
+ slot |   template   
+------+--------------
+   16 | NN-NNN
+   17 | NNNN AA
+   18 | NNN NN
+   19 | NNNNN[-NNNN]
+   20 | NNNN
+   21 | NNNNN
+(6 rows)
+
+-- a template is permanent once written: values are read back through it
+\set VERBOSITY terse
+UPDATE postal_code_templates SET template = 'NNNNN' WHERE slot = 16;
+ERROR:  postal_code_templates rows are permanent: stored postal_code values are decoded with them
+DELETE FROM postal_code_templates WHERE slot = 16;
+ERROR:  postal_code_templates rows are permanent: stored postal_code values are decoded with them
+TRUNCATE postal_code_templates;
+ERROR:  postal_code_templates rows are permanent: stored postal_code values are decoded with them
+\set VERBOSITY default
+SELECT slot, template FROM postal_code_templates ORDER BY slot;
+ slot |   template   
+------+--------------
+   16 | NN-NNN
+   17 | NNNN AA
+   18 | NNN NN
+   19 | NNNNN[-NNNN]
+   20 | NNNN
+   21 | NNNNN
+(6 rows)
+
+SELECT remove_country_format(cc) FROM unnest(ARRAY['PL', 'NL', 'SE', 'MC', 'AT', 'DE']) cc;
+ remove_country_format 
+-----------------------
+ 
+ 
+ 
+ 
+ 
+ 
+(6 rows)
+
+-- and when all 47 slots are taken
+BEGIN;
+SELECT count(add_country_template('PL', t)) AS filled FROM (
+   SELECT t FROM (
+      SELECT repeat('N', a) || repeat('A', b) AS t FROM generate_series(1, 6) a, generate_series(1, 4) b
+      UNION ALL SELECT repeat('X', c) FROM generate_series(1, 9) c
+      UNION ALL SELECT repeat('N', c) FROM generate_series(1, 9) c
+      UNION ALL SELECT repeat('A', c) FROM generate_series(1, 6) c
+   ) q
+   WHERE t NOT IN (SELECT template FROM postal_code_templates)
+   ORDER BY t
+   LIMIT 47 - (SELECT count(*) FROM postal_code_templates)
+) f;
+ filled 
+--------
+     41
+(1 row)
+
+SELECT count(*) AS slots, min(slot), max(slot) FROM postal_code_templates;
+ slots | min | max 
+-------+-----+-----
+    47 |  16 |  62
+(1 row)
+
+SELECT add_country_template('PL', 'NNNNNNNNNN');
+ERROR:  all 47 postal_code template slots are in use
+CONTEXT:  PL/pgSQL function add_country_template(text,text) line 14 at RAISE
+ROLLBACK;
 -- ===== outcode() and district() ==============================================
 -- The area part of a postcode, as a complete valid postcode of its own.
 -- district() is the same function under its other name.

@@ -38,6 +38,17 @@ typedef enum {
    PC_FMT_MAX
 } pc_format;
 
+// Tags PC_FMT_TEMPLATE_FIRST..PC_FMT_TEMPLATE_LAST are not compiled encoders
+// but SLOTS in the postal_code_templates SQL table: a slot names a template
+// (postal_code_template.h), a country assigned to that template stamps its
+// values with the slot, and a stored value finds its template again through
+// the slot -- so, like the compiled formats, a value is always decoded the way
+// it was written, and a template is immutable once it has a slot. They live
+// well above the compiled formats (which have room to grow, 1..15) and below
+// the end-of-country bound.
+#define PC_FMT_TEMPLATE_FIRST 16
+#define PC_FMT_TEMPLATE_LAST  62
+
 // The format tag with every bit set is reserved and is never a real format:
 // it marks the END-OF-COUNTRY BOUND, the value that sorts after every real
 // value of its country and before the first value of the next one (country

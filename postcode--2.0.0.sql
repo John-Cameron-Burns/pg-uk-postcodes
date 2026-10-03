@@ -768,6 +768,88 @@ COMMENT ON FUNCTION remove_country_format(text) IS
    'Undo add_country_format(): after this, parsing "CC-..."/postal_code(..., cc) for that country raises rather than resolving to whatever format it used to have. Existing stored values for that country are unaffected -- see postal_code_country_formats'' own comment.';
 
 
+-- ---- templated formats -------------------------------------------------------
+-- A country whose postal codes are just fixed-width groups of digits and
+-- letters needs no C encoder: it can be assigned a TEMPLATE, e.g.
+--
+--   SELECT add_country_template('PL', 'NN-NNN');
+--   SELECT add_country_template('NL', 'NNNN AA');
+--   SELECT add_country_template('DE', 'NNNNN');
+--
+-- N is a digit, A a letter, X either; ' ' and '-' are separators (always
+-- written, optional on input); one optional [ ] group may end the template,
+-- and without it the code before the group (the "outcode") is a value of its
+-- own, so 'NNNNN[-NNNN]' is ZIP5 with an optional +4. See
+-- postal_code_template.h for the rules and the encoding.
+--
+-- Stored values carry the template's SLOT as their format tag, and read it back
+-- through this table, so a template can never change once it has a slot
+-- (the trigger below refuses): to change a country's format, assign it a
+-- new template; values already written still decode under the old one.
+-- Slots 16..62 are available, the same template is only ever stored once,
+-- and countries sharing a shape share a slot.
+CREATE TABLE postal_code_templates (
+   slot       smallint PRIMARY KEY CHECK (slot BETWEEN 16 AND 62),
+   template   text NOT NULL UNIQUE,
+   created_at timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE postal_code_templates IS
+   'The templated postal_code formats in use: the slot is the format tag stored in every value written under it, so rows are permanent -- they cannot be updated or deleted. Add them with add_country_template(), not by hand. Included in pg_dump, because values cannot be read without them.';
+SELECT pg_extension_config_dump('postal_code_templates', '');
+
+CREATE FUNCTION postal_code_template_check(text)
+   RETURNS text
+   AS 'MODULE_PATHNAME', 'postal_code_template_check'
+   LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION postal_code_template_check(text) IS
+   'Validates a postal_code template and returns it in canonical form, or raises an error saying what is wrong with it.';
+
+CREATE FUNCTION postal_code_templates_are_permanent()
+   RETURNS trigger
+   LANGUAGE plpgsql AS $$
+BEGIN
+   RAISE EXCEPTION 'postal_code_templates rows are permanent: stored postal_code values are decoded with them'
+      USING HINT = 'to change a country''s format, assign it a new template with add_country_template()';
+END;
+$$;
+CREATE TRIGGER postal_code_templates_permanent_row
+   BEFORE UPDATE OR DELETE ON postal_code_templates
+   FOR EACH ROW EXECUTE FUNCTION postal_code_templates_are_permanent();
+CREATE TRIGGER postal_code_templates_permanent_truncate
+   BEFORE TRUNCATE ON postal_code_templates
+   FOR EACH STATEMENT EXECUTE FUNCTION postal_code_templates_are_permanent();
+
+CREATE FUNCTION add_country_template(cc text, tpl text)
+   RETURNS void
+   LANGUAGE plpgsql AS $$
+DECLARE
+   spec text := postal_code_template_check(tpl);
+   free_slot smallint;
+BEGIN
+   -- one writer at a time, so two sessions cannot be given the same slot
+   LOCK TABLE postal_code_templates IN SHARE ROW EXCLUSIVE MODE;
+
+   SELECT t.slot INTO free_slot FROM postal_code_templates t WHERE t.template = spec;
+   IF free_slot IS NULL THEN
+      SELECT min(g) INTO free_slot FROM generate_series(16, 62) g
+      WHERE g NOT IN (SELECT t.slot FROM postal_code_templates t);
+      IF free_slot IS NULL THEN
+         RAISE EXCEPTION 'all 47 postal_code template slots are in use';
+      END IF;
+      INSERT INTO postal_code_templates (slot, template) VALUES (free_slot, spec);
+   END IF;
+
+   INSERT INTO postal_code_formats (name, description)
+   VALUES ('template:' || spec, 'Template ' || spec)
+   ON CONFLICT (name) DO NOTHING;
+
+   PERFORM add_country_format(cc, 'template:' || spec);
+END;
+$$;
+COMMENT ON FUNCTION add_country_template(text, text) IS
+   'Assign (or reassign) a country to a templated format, creating the template if it is new: add_country_template(''PL'', ''NN-NNN''). N is a digit, A a letter, X either; '' '' and ''-'' are separators; one optional [ ] group may end the template (''NNNNN[-NNNN]''). Values already stored for the country keep the format they were written with.';
+
+
 -- A range of postal codes: a native PostgreSQL range type, so it comes with
 -- <@ / @> / && / -|- (adjacent) and multiranges for free. [lo, hi) is built
 -- from a fragment by postal_prefix('GB-LS24').
@@ -811,6 +893,11 @@ CREATE FUNCTION postal_code_formats_changed()
 
 CREATE TRIGGER postal_code_country_formats_changed
    AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON postal_code_country_formats
+   FOR EACH STATEMENT EXECUTE FUNCTION postal_code_formats_changed();
+-- ... and likewise the template cache: a template added in a transaction
+-- that then rolls back must not linger in other backends' caches.
+CREATE TRIGGER postal_code_templates_changed
+   AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON postal_code_templates
    FOR EACH STATEMENT EXECUTE FUNCTION postal_code_formats_changed();
 
 

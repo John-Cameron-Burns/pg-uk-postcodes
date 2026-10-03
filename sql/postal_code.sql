@@ -526,6 +526,160 @@ CREATE TEMP TABLE nowhere (pc postal_code('ZZ'));
 INSERT INTO nowhere VALUES ('ZZ-12345');
 SELECT is_valid('12345', 'ZZ') AS can_anything_be_valid_there;
 
+-- ===== Templated formats =====================================================
+-- A country made of fixed-width digit/letter groups needs only an SQL row.
+--
+-- First, a template that was rolled back must not be remembered. Slot 16 is
+-- NNN in the first transaction and AAA in the second, and the backend caches
+-- what a slot means; the second must not see the first.
+BEGIN;
+SELECT add_country_template('PL', 'NNN');
+SELECT 'PL-123'::postal_code;
+ROLLBACK;
+BEGIN;
+SELECT add_country_template('PL', 'AAA');
+SELECT 'PL-ABC'::postal_code;
+SAVEPOINT s;
+SELECT 'PL-123'::postal_code;
+ROLLBACK TO s;
+ROLLBACK;
+SELECT 'PL-ABC'::postal_code;
+SELECT count(*) AS slots_in_use_after_rollbacks FROM postal_code_templates;
+
+-- templates that are not templates
+SELECT postal_code_template_check('NNNNN[-NNNN]') AS ok, postal_code_template_check('X') AS also_ok;
+SELECT postal_code_template_check('');
+SELECT postal_code_template_check('nn');
+SELECT postal_code_template_check('NN-');
+SELECT postal_code_template_check('NN[N');
+SELECT postal_code_template_check('NN[N][N]');
+SELECT postal_code_template_check('XXXXXXXXXX');
+\set VERBOSITY terse
+SELECT add_country_template('PL', 'NN?');
+SELECT add_country_template('PLX', 'NN');
+\set VERBOSITY default
+
+-- Assigning countries. These persist until the end of the section (the
+-- templates themselves are permanent), so the checks below can fail freely.
+SELECT add_country_template('PL', 'NN-NNN');
+SELECT add_country_template('NL', 'NNNN AA');
+SELECT add_country_template('SE', 'NNN NN');
+SELECT add_country_template('MC', 'NNNNN[-NNNN]');
+SELECT add_country_template('AT', 'NNNN');
+SELECT add_country_template('DE', 'NNNN');      -- the same shape shares a slot
+SELECT add_country_template('pl', 'NN-NNN');    -- cc is normalised; same template, same slot
+SELECT slot, template FROM postal_code_templates ORDER BY slot;
+SELECT iso2, format_name FROM postal_code_country_formats WHERE format_name LIKE 'template:%' ORDER BY iso2;
+
+-- in, out, either case, separators optional
+SELECT 'PL-00-950'::postal_code AS a, 'pl-00950'::postal_code AS b, postal_code('00-950', 'PL') AS c, postal_code('00950', 'PL') AS d;
+SELECT 'NL-1012 jl'::postal_code AS a, 'NL-1012JL'::postal_code AS b;
+SELECT 'SE-114 55'::postal_code, 'MC-98000'::postal_code AS bare, 'MC-98000-0001'::postal_code AS plus4;
+SELECT 'MC-98000-0000'::postal_code AS zeros_are_fine_in_a_template;
+
+-- bad input says why
+SELECT 'PL-0O-950'::postal_code;
+SELECT 'PL-00-9500'::postal_code;
+SELECT 'PL-00-95'::postal_code;
+SELECT 'NL-1012 J'::postal_code;
+SELECT 'NL-1012 11'::postal_code;
+SELECT 'MC-98000-'::postal_code;
+SELECT to_postal_code('PL-00-9500') AS null_not_error, is_valid('PL-00-950') AS yes, is_valid('PL-00-95') AS no;
+
+-- ordering is text ordering; a coarser value sorts before the finer ones, and
+-- countries stay in ISO order whichever kind of format they use
+SELECT pc FROM (VALUES ('MC-98000-0001'), ('MC-98000'), ('MC-97999-9999'), ('MC-98001'), ('MC-98000-0000'),
+                       ('NL-1012 JL'), ('NL-1012 JA'), ('NL-1011 ZZ'), ('MC-~'), ('PL-00-950'), ('PL-00-949'),
+                       ('GB-SW1A'), ('AT-1010'), ('US-90210')) v(t), LATERAL (SELECT t::postal_code AS pc) x
+ORDER BY pc;
+
+-- outcode: the part before the optional group, if the template has one
+SELECT pc, outcode(pc) AS outcode, district(pc) AS district
+FROM (VALUES ('MC-98000-0001'), ('MC-98000'), ('PL-00-950'), ('NL-1012 JL')) v(t), LATERAL (SELECT t::postal_code AS pc) x;
+SELECT outcode(outcode('MC-98000-0001')) = outcode('MC-98000-0001') AS idempotent;
+
+-- fragments, bounds and ranges, as for the compiled formats
+SELECT lower_bound('PL-00') AS lo, upper_bound('PL-00') AS hi;
+SELECT lower_bound('PL-00-9') AS lo, upper_bound('PL-00-9') AS hi;
+SELECT lower_bound('PL-99') AS lo, upper_bound('PL-99') AS hi_is_the_end_of_the_country;
+SELECT lower_bound('NL-10') AS lo, upper_bound('NL-10') AS hi;
+SELECT lower_bound('NL-1012 J') AS lo, upper_bound('NL-1012 J') AS hi;
+SELECT lower_bound('NL-1012 ZZ') AS lo, upper_bound('NL-1012 ZZ') AS hi;
+SELECT lower_bound('MC-98000') AS lo, upper_bound('MC-98000') AS hi;
+SELECT lower_bound('MC-98000-') AS lo, upper_bound('MC-98000-') AS hi;
+SELECT lower_bound('MC-98000-12') AS lo, upper_bound('MC-98000-12') AS hi;
+SELECT lower_bound('MC-98000-9999') AS lo, upper_bound('MC-98000-9999') AS hi;
+SELECT lower_bound('MC-99999-99') AS lo, upper_bound('MC-99999-99') AS hi_is_the_end_of_the_country;
+SELECT postal_prefix('SE-11') AS r, 'SE-114 55'::postal_code <@ postal_prefix('SE-11') AS inside;
+SELECT lower_bound('PL-00-9500');
+SELECT lower_bound('PL-A');
+SELECT lower_bound('NL-1012 JLX');
+
+-- partial match
+SELECT 'MC-98000-0001'::postal_code % 'MC-98', 'MC-98000'::postal_code % 'MC-98000-', 'MC-97999'::postal_code % 'MC-98',
+       'NL-1012 JL'::postal_code % 'NL-1012 J', 'NL-1012 JL'::postal_code !% 'NL-1013', 'PL-00-950'::postal_code % 'PL-0';
+
+-- all of it over an index
+CREATE TEMP TABLE zips (id serial, pc postal_code);
+INSERT INTO zips (pc) SELECT postal_code(lpad(g::text, 5, '0'), 'MC') FROM generate_series(95000, 99999, 7) g;
+INSERT INTO zips (pc) SELECT postal_code(lpad((95000 + g)::text, 5, '0') || '-' || lpad(g::text, 4, '0'), 'MC') FROM generate_series(1, 4000, 13) g;
+CREATE INDEX ON zips (pc);
+ANALYZE zips;
+SELECT count(*) AS by_range FROM zips WHERE pc <@ postal_prefix('MC-9812');
+SELECT count(*) AS by_text  FROM zips WHERE pc::text LIKE 'MC-9812%';
+SELECT count(*) AS by_op    FROM zips WHERE pc % 'MC-9812';
+SELECT count(*) AS plus4s   FROM zips WHERE pc % 'MC-96000-0';
+SELECT count(*) AS by_text  FROM zips WHERE pc::text LIKE 'MC-96000-0%';
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF) SELECT * FROM zips WHERE pc <@ postal_prefix('MC-9812');
+RESET enable_seqscan;
+
+-- a column locked to a templated country
+CREATE TEMP TABLE pl (pc postal_code('PL'));
+INSERT INTO pl VALUES ('PL-00-950');
+COPY pl FROM stdin;
+01-001
+\.
+INSERT INTO pl VALUES ('NL-1012 JL');
+SELECT pc FROM pl ORDER BY pc;
+
+-- a country moves to a different template: new values follow the new one, values
+-- already stored go on reading as they were written
+CREATE TEMP TABLE pl_old AS SELECT 'PL-00-950'::postal_code AS pc;
+SELECT add_country_template('PL', 'NNNNN');
+SELECT 'PL-00950'::postal_code AS new_style;
+SELECT 'PL-00-950'::postal_code;
+SELECT pc AS still_reads_as_written, outcode(pc) IS NULL AS no_outcode FROM pl_old;
+SELECT pc = 'PL-00950'::postal_code AS different_format_different_value FROM pl_old;
+SELECT slot, template FROM postal_code_templates ORDER BY slot;
+
+-- a template is permanent once written: values are read back through it
+\set VERBOSITY terse
+UPDATE postal_code_templates SET template = 'NNNNN' WHERE slot = 16;
+DELETE FROM postal_code_templates WHERE slot = 16;
+TRUNCATE postal_code_templates;
+\set VERBOSITY default
+SELECT slot, template FROM postal_code_templates ORDER BY slot;
+
+SELECT remove_country_format(cc) FROM unnest(ARRAY['PL', 'NL', 'SE', 'MC', 'AT', 'DE']) cc;
+
+-- and when all 47 slots are taken
+BEGIN;
+SELECT count(add_country_template('PL', t)) AS filled FROM (
+   SELECT t FROM (
+      SELECT repeat('N', a) || repeat('A', b) AS t FROM generate_series(1, 6) a, generate_series(1, 4) b
+      UNION ALL SELECT repeat('X', c) FROM generate_series(1, 9) c
+      UNION ALL SELECT repeat('N', c) FROM generate_series(1, 9) c
+      UNION ALL SELECT repeat('A', c) FROM generate_series(1, 6) c
+   ) q
+   WHERE t NOT IN (SELECT template FROM postal_code_templates)
+   ORDER BY t
+   LIMIT 47 - (SELECT count(*) FROM postal_code_templates)
+) f;
+SELECT count(*) AS slots, min(slot), max(slot) FROM postal_code_templates;
+SELECT add_country_template('PL', 'NNNNNNNNNN');
+ROLLBACK;
+
 -- ===== outcode() and district() ==============================================
 -- The area part of a postcode, as a complete valid postcode of its own.
 -- district() is the same function under its other name.

@@ -14,7 +14,11 @@
 // this file is the ONLY place in the postal_code_* sources that
 // touches Postgres/SPI, so that everything else stays usable from a
 // plain standalone build (test_postal_code.c).
+//
+// *slot is set to the postal_code_templates slot when the assigned format
+// is a template ("template:NNN NN"), else -1. A name that says template but
+// has no slot row yields a non-NULL name and slot -1.
 __attribute__((warn_unused_result))
-char *pc_lookup_country_format (const char iso2[2]);
+char *pc_lookup_country_format (const char iso2[2], int *slot);
 
 #endif
