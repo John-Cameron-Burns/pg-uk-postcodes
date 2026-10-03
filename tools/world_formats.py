@@ -160,6 +160,7 @@ def sql_text(names):
            "INSERT INTO postal_code_templates (slot, template, builtin) VALUES"]
     out.append(",\n".join(f"   ({12 + i}, {q(t)}, true)" for i, t in enumerate(tpls)) + ";")
     out.append("INSERT INTO postal_code_formats (name, description)\n   SELECT 'template:' || template, 'Template ' || template FROM postal_code_templates WHERE builtin;")
+    out.append("UPDATE postal_code_formats SET builtin = true;          -- everything present at install is shipped")
     rows = []
     for c in sorted(W):
         f, b = W[c]

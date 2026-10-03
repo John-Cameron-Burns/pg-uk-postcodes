@@ -2272,6 +2272,36 @@ SELECT 'AR-B1832GMR'::postal_code % 'AR-B' AS yes, 'AR-1832'::postal_code % 'AR-
  t   | f              | t    | f
 (1 row)
 
+-- ===== pg_dump ===============================================================
+-- pg_dump copies each configuration table with the condition the extension
+-- registered, and runs with an EMPTY search_path. A condition that names a table
+-- unqualified fails there ("relation does not exist") and makes pg_dump fail for the
+-- whole database -- so run every condition the way pg_dump does.
+DO $$
+DECLARE
+   r record;
+   n int := 0;
+BEGIN
+   SET LOCAL search_path = '';
+   FOR r IN SELECT u.cfg::regclass::text AS tbl, u.cond
+            FROM pg_extension e, unnest(e.extconfig, e.extcondition) AS u(cfg, cond)
+            WHERE e.extname = 'postcode' LOOP
+      EXECUTE format('SELECT count(*) FROM %s %s', r.tbl, coalesce(r.cond, ''));
+      n := n + 1;
+   END LOOP;
+   RAISE NOTICE '% configuration tables dump cleanly with an empty search_path', n;
+END $$;
+NOTICE:  3 configuration tables dump cleanly with an empty search_path
+SELECT u.cfg::regclass AS table, coalesce(u.cond, '') AS dumped_where
+FROM pg_extension e, unnest(e.extconfig, e.extcondition) AS u(cfg, cond)
+WHERE e.extname = 'postcode' ORDER BY u.cfg::regclass::text;
+           table            |   dumped_where    
+----------------------------+-------------------
+ postal_code_formats        | WHERE NOT builtin
+ postal_code_templates      | WHERE NOT builtin
+ postal_code_user_countries | 
+(3 rows)
+
 -- ===== Built-in and user assignments =========================================
 -- What ships with the extension is separate from what users assign, so a dump
 -- can carry exactly the latter. The view shows both; a user row wins.

@@ -707,7 +707,8 @@ CREATE FUNCTION country(postal_code)
 
 CREATE TABLE postal_code_formats (
    name        text PRIMARY KEY,
-   description text NOT NULL
+   description text NOT NULL,
+   builtin     boolean NOT NULL DEFAULT false
 );
 COMMENT ON TABLE postal_code_formats IS
    'One row per postal_code format actually compiled into this extension (pc_formats[] in postal_code_fmt.c) -- a row here with no matching C encoder does nothing. Exists so postal_code_country_formats has something real to reference via foreign key, and so SELECT * FROM postal_code_formats is a live list of what''s available. Maintained by this extension''s own upgrade scripts; not meant for ad hoc editing.';
@@ -750,9 +751,9 @@ CREATE TABLE postal_code_user_countries (
 COMMENT ON TABLE postal_code_user_countries IS
    'Country -> format assignments made with add_country_format() / add_country_template() / remove_country_format(), on top of postal_code_builtin_countries (a NULL format_name means a built-in assignment was removed). Included in pg_dump, so assignments survive a dump and restore. Edit through the functions, not by hand.';
 SELECT pg_extension_config_dump('postal_code_user_countries', '');
--- the formats these refer to that a user created (templates); the built-in ones come with the extension
-SELECT pg_extension_config_dump('postal_code_formats',
-   $$WHERE name LIKE 'template:%' AND name NOT IN (SELECT 'template:' || template FROM postal_code_templates WHERE builtin)$$);
+-- the formats these refer to that a user created (templates); the built-in ones come with the extension.
+-- pg_dump runs this condition with an EMPTY search_path, so it must not name any table.
+SELECT pg_extension_config_dump('postal_code_formats', 'WHERE NOT builtin');
 
 CREATE VIEW postal_code_country_formats AS
    SELECT u.iso2, u.format_name, false AS builtin, u.assigned_at
@@ -946,6 +947,7 @@ INSERT INTO postal_code_templates (slot, template, builtin) VALUES
    (51, '[A]NNNN[AAA]', true);
 INSERT INTO postal_code_formats (name, description)
    SELECT 'template:' || template, 'Template ' || template FROM postal_code_templates WHERE builtin;
+UPDATE postal_code_formats SET builtin = true;          -- everything present at install is shipped
 INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('AD', 'template:CCNNN'),
    ('AE', 'template:NNNNN[ NNNNN]'),
