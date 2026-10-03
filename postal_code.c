@@ -8,6 +8,7 @@
 #include <libpq/pqformat.h>
 #include <access/htup_details.h>
 #include <catalog/namespace.h>
+#include <catalog/pg_type.h>
 #include <commands/trigger.h>
 #include <nodes/makefuncs.h>
 #include <nodes/nodeFuncs.h>
@@ -63,6 +64,9 @@ Datum postal_code_upper_bound (PG_FUNCTION_ARGS);
 Datum postal_code_prefix (PG_FUNCTION_ARGS);
 Datum postal_code_outcode (PG_FUNCTION_ARGS);
 Datum postal_code_prefix_support (PG_FUNCTION_ARGS);
+Datum postal_code_partial (PG_FUNCTION_ARGS);
+Datum postal_code_not_partial (PG_FUNCTION_ARGS);
+Datum postal_code_partial_support (PG_FUNCTION_ARGS);
 Datum postal_code_formats_changed (PG_FUNCTION_ARGS);
 Datum postal_code_lenient_text (PG_FUNCTION_ARGS);
 Datum postal_code_country  (PG_FUNCTION_ARGS);
@@ -552,6 +556,53 @@ Datum postal_code_prefix (PG_FUNCTION_ARGS) {
 // isn't a plain constant, is left alone and computed at run time.
 PG_FUNCTION_INFO_V1(postal_code_prefix_support);
 
+// Non-raising fragment -> [lo, hi), for the partial-match operator and the
+// planner support functions. False for anything that is not a valid
+// fragment of an assigned country ("CC-" prefix missing, unassigned country,
+// not a prefix of that format) -- the UK type's % has always meant "no
+// match" rather than an error for a bad fragment, since it is meant to be
+// fed arbitrary input such as a search box.
+static bool fragment_range_try (const char *str, char iso2[2], pc_format *fmt,
+                                postal_code *lo_pc, postal_code *hi_pc) {
+   char *hyphen = strchr(str, '-');
+   if (!hyphen || hyphen - str != 2) return false;
+
+   lc_result why;
+   char *format_name;
+   *fmt = lookup_country_try(str, 2, iso2, &why, &format_name);
+   if (why != LC_OK || !pc_formats[*fmt]->range) return false;
+
+   uint64_t lo, hi = 0;
+   bool unbounded;
+   if (! pc_formats[*fmt]->range(hyphen + 1, &lo, &hi, &unbounded)) return false;
+
+   *lo_pc = pc_assemble(iso2, *fmt, lo);
+   *hi_pc = pc_assemble(iso2, unbounded ? (pc_format) PC_FMT_END : *fmt, unbounded ? 0 : hi);
+   return true;
+}
+
+// Plan-time version for the support functions: only for a CONSTANT, non-NULL
+// fragment, and only when the folded plan can be tied to the country->format
+// table so it is invalidated when that changes (see below). On success
+// registers that dependency. False means "don't fold": leave the call for
+// run time, where a bad fragment behaves exactly as it always does.
+static bool plan_fragment (SupportRequestSimplify *req, Node *fragexpr, Oid funcid,
+                           postal_code *lo_pc, postal_code *hi_pc) {
+   if (req->root == NULL) return false;
+   if (!IsA(fragexpr, Const) || ((Const *) fragexpr)->constisnull) return false;
+
+   Oid relid = get_relname_relid("postal_code_country_formats", get_func_namespace(funcid));
+   if (!OidIsValid(relid)) return false;
+
+   char iso2[2];
+   pc_format fmt;
+   if (! fragment_range_try(TextDatumGetCString(((Const *) fragexpr)->constvalue), iso2, &fmt, lo_pc, hi_pc))
+      return false;
+
+   req->root->glob->relationOids = lappend_oid(req->root->glob->relationOids, relid);
+   return true;
+}
+
 Datum postal_code_prefix_support (PG_FUNCTION_ARGS) {
    Node *rawreq = (Node *) PG_GETARG_POINTER(0);
 
@@ -559,35 +610,87 @@ Datum postal_code_prefix_support (PG_FUNCTION_ARGS) {
 
    SupportRequestSimplify *req = (SupportRequestSimplify *) rawreq;
    FuncExpr *fexpr = req->fcall;
-   if (req->root == NULL || list_length(fexpr->args) != 1) PG_RETURN_POINTER(NULL);
+   if (list_length(fexpr->args) != 1) PG_RETURN_POINTER(NULL);
 
-   Node *arg = (Node *) linitial(fexpr->args);
-   if (!IsA(arg, Const) || ((Const *) arg)->constisnull) PG_RETURN_POINTER(NULL);
+   postal_code lo, hi;
+   if (! plan_fragment(req, (Node *) linitial(fexpr->args), fexpr->funcid, &lo, &hi))
+      PG_RETURN_POINTER(NULL);
 
-   Oid relid = get_relname_relid("postal_code_country_formats", get_func_namespace(fexpr->funcid));
-   if (!OidIsValid(relid)) PG_RETURN_POINTER(NULL);
+   PG_RETURN_POINTER(makeConst(fexpr->funcresulttype, -1, InvalidOid, -1,
+                               build_prefix_range(fexpr->funcresulttype, lo, hi), false, false));
+}
 
-   // From here every failure means "not foldable": leave it to run time,
-   // where the same call raises a proper error for a bad fragment.
-   char *str = TextDatumGetCString(((Const *) arg)->constvalue);
-   char *hyphen = strchr(str, '-');
-   if (!hyphen || hyphen - str != 2) PG_RETURN_POINTER(NULL);
+// pc % 'GB-LS24': does pc start with the fragment? The UK type's operator,
+// ported -- same meaning, same leniency (a fragment that isn't one matches
+// nothing, and its negator !% matches everything), and `pc % 'CC-xxx'` is the
+// same test as `pc <@ postal_prefix('CC-xxx')` except that a bad fragment is
+// false rather than an error.
+PG_FUNCTION_INFO_V1(postal_code_partial);
 
+Datum postal_code_partial (PG_FUNCTION_ARGS) {
+   postal_code pc = PG_GETARG_POSTAL_CODE(0);
    char iso2[2];
-   lc_result why;
-   char *format_name;
-   pc_format fmt = lookup_country_try(str, 2, iso2, &why, &format_name);
-   if (why != LC_OK || !pc_formats[fmt]->range) PG_RETURN_POINTER(NULL);
+   pc_format fmt;
+   postal_code lo, hi;
 
-   uint64_t lo, hi = 0;
-   bool unbounded;
-   if (! pc_formats[fmt]->range(hyphen + 1, &lo, &hi, &unbounded)) PG_RETURN_POINTER(NULL);
+   if (! fragment_range_try(text_to_cstring(PG_GETARG_TEXT_PP(1)), iso2, &fmt, &lo, &hi))
+      PG_RETURN_BOOL(false);
+   PG_RETURN_BOOL(pc >= lo && pc < hi);
+}
 
-   req->root->glob->relationOids = lappend_oid(req->root->glob->relationOids, relid);
+PG_FUNCTION_INFO_V1(postal_code_not_partial);
 
-   Datum range = build_prefix_range(fexpr->funcresulttype, pc_assemble(iso2, fmt, lo),
-                                    pc_assemble(iso2, unbounded ? (pc_format) PC_FMT_END : fmt, unbounded ? 0 : hi));
-   PG_RETURN_POINTER(makeConst(fexpr->funcresulttype, -1, InvalidOid, -1, range, false, false));
+Datum postal_code_not_partial (PG_FUNCTION_ARGS) {
+   postal_code pc = PG_GETARG_POSTAL_CODE(0);
+   char iso2[2];
+   pc_format fmt;
+   postal_code lo, hi;
+
+   if (! fragment_range_try(text_to_cstring(PG_GETARG_TEXT_PP(1)), iso2, &fmt, &lo, &hi))
+      PG_RETURN_BOOL(true);
+   PG_RETURN_BOOL(!(pc >= lo && pc < hi));
+}
+
+// Planner support for %: `col % 'constant fragment'` becomes
+// `col >= lo AND col < hi` at plan time, so it uses a btree index through the
+// ordinary, sound >= and < strategies (the UK type does the same; % itself is
+// not an equivalence relation and is deliberately NOT registered in the btree
+// opfamily). The fold depends on the country->format table exactly as
+// postal_prefix() does (same dependency, same invalidating trigger). Declines
+// -- leaving the plain function, which is always correct -- for a non-constant
+// fragment, a NULL, or a fragment that isn't valid, so the runtime result
+// (false) is never changed by the optimizer.
+PG_FUNCTION_INFO_V1(postal_code_partial_support);
+
+Datum postal_code_partial_support (PG_FUNCTION_ARGS) {
+   Node *rawreq = (Node *) PG_GETARG_POINTER(0);
+
+   if (!IsA(rawreq, SupportRequestSimplify)) PG_RETURN_POINTER(NULL);
+
+   SupportRequestSimplify *req = (SupportRequestSimplify *) rawreq;
+   FuncExpr *fcall = req->fcall;
+   if (list_length(fcall->args) != 2) PG_RETURN_POINTER(NULL);
+
+   Node *colexpr  = (Node *) linitial(fcall->args);
+   Node *fragexpr = (Node *) lsecond(fcall->args);
+
+   postal_code lo, hi;
+   if (! plan_fragment(req, fragexpr, fcall->funcid, &lo, &hi)) PG_RETURN_POINTER(NULL);
+
+   Oid typ = exprType(colexpr);
+   Oid geOid = OpernameGetOprid(list_make1(makeString(">=")), typ, typ);
+   Oid ltOid = OpernameGetOprid(list_make1(makeString("<")),  typ, typ);
+   if (!OidIsValid(geOid) || !OidIsValid(ltOid)) PG_RETURN_POINTER(NULL);
+
+   Const *loConst = makeConst(typ, -1, InvalidOid, sizeof(int64), Int64GetDatum((int64) lo), false, FLOAT8PASSBYVAL);
+   Const *hiConst = makeConst(typ, -1, InvalidOid, sizeof(int64), Int64GetDatum((int64) hi), false, FLOAT8PASSBYVAL);
+
+   OpExpr *ge = (OpExpr *) make_opclause(geOid, BOOLOID, false, (Expr *) colexpr, (Expr *) loConst, InvalidOid, InvalidOid);
+   set_opfuncid(ge);
+   OpExpr *lt = (OpExpr *) make_opclause(ltOid, BOOLOID, false, (Expr *) colexpr, (Expr *) hiConst, InvalidOid, InvalidOid);
+   set_opfuncid(lt);
+
+   PG_RETURN_POINTER(make_andclause(list_make2(ge, lt)));
 }
 
 // Statement-level trigger on postal_code_country_formats: DML does not

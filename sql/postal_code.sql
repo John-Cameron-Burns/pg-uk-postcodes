@@ -385,6 +385,65 @@ RESET enable_bitmapscan;
 -- a fragment that is not a constant still works (computed per row; no folding)
 SELECT count(*) AS joined FROM (VALUES ('US-9'), ('CA-T')) f(frag) JOIN addr a ON a.pc <@ postal_prefix(f.frag);
 
+-- ===== The % operator =======================================================
+-- pc % 'fragment': does pc start with the fragment? The UK type's operator,
+-- ported. Same meaning as pc <@ postal_prefix(fragment), with its leniency: a
+-- fragment that isn't one matches nothing (and !% matches everything), since
+-- it is meant for arbitrary input such as a search box.
+SELECT 'GB-LS24 9JT'::postal_code % 'GB-LS24' AS inside,
+       'GB-LS25 9JT'::postal_code % 'GB-LS24' AS next_district,
+       'GB-LS24 9JT'::postal_code % 'GB-LS2'  AS ls2_is_district_ls2_only,
+       'US-90210-1234'::postal_code % 'US-902' AS zip_prefix,
+       'US-90210-1234'::postal_code % 'US-90211' AS other_zip,
+       'CA-K1A 0B1'::postal_code % 'CA-K1' AS ca,
+       'IE-D6W'::postal_code % 'IE-D6' AS d6w_is_in_d6,
+       'FR-75054'::postal_code % 'FR-75' AS fr_in,
+       'FR-75054'::postal_code % 'FR-76' AS fr_out;
+SELECT 'US-90210'::postal_code !% 'US-902' AS not_matching_is_false, 'US-90210'::postal_code !% 'US-903' AS not_matching_is_true;
+
+-- a bad fragment is "no match", not an error
+SELECT 'US-90210'::postal_code % 'nonsense' AS garbage,
+       'US-90210'::postal_code % '90210' AS no_country,
+       'US-90210'::postal_code % 'ZZ-1' AS unassigned_country,
+       'US-90210'::postal_code % 'US-9x' AS not_a_prefix,
+       'US-90210'::postal_code !% 'nonsense' AS negator_matches_everything,
+       'US-90210'::postal_code % NULL AS null_fragment;
+
+-- identical to the range form for every valid fragment, on the fixture
+-- (fragments where GB's hierarchical rule and plain text prefix agree)
+SELECT count(*) AS disagreements FROM addr a,
+   (VALUES ('US-9'),('US-99'),('US-90210'),('CA-T'),('CA-T0'),('CA-V'),('GB-PH'),('IE-D'),('FR-7'),
+           ('BR-0'),('BR-08970'),('CZ-5'),('LU-L-4'),('GB-GX'),('CA-Y')) f(frag)
+WHERE (a.pc % f.frag) IS DISTINCT FROM (a.pc <@ postal_prefix(f.frag));
+
+-- uses a btree index for a constant fragment, the top of a country included
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+SELECT pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc % 'GB-PH' $q$) AS bounded,
+       pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc % 'US-99' $q$) AS top_of_country,
+       pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc % 'nonsense' $q$) AS bad_fragment_is_left_alone;
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+
+-- a column fragment works too (computed per row)
+SELECT count(*) AS joined FROM (VALUES ('US-9'), ('CA-T'), ('bad')) f(frag) JOIN addr a ON a.pc % f.frag;
+
+-- the cached-plan safety net, for % as for postal_prefix(): Switzerland is
+-- assigned the plain-5-digit format, a row is stored, a statement is prepared
+-- (its plan cached), then Switzerland is reassigned to the Czech format. The
+-- same prepared statement must now mean the CZ range.
+SELECT add_country_format('CH', 'FR');
+INSERT INTO addr (pc) VALUES ('CH-12345');
+PREPARE ch_prefix AS SELECT pc FROM addr WHERE pc % 'CH-12';
+EXECUTE ch_prefix;
+EXECUTE ch_prefix;
+SELECT add_country_format('CH', 'CZ');
+INSERT INTO addr (pc) VALUES ('CH-12345');
+EXECUTE ch_prefix;
+DEALLOCATE ch_prefix;
+SELECT remove_country_format('CH');
+DELETE FROM addr WHERE pc::text LIKE 'CH-%';
+
 -- ===== outcode() and district() ==============================================
 -- The area part of a postcode, as a complete valid postcode of its own.
 -- district() is the same function under its other name.

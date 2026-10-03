@@ -370,6 +370,23 @@ on `postal_code_country_formats` and a trigger invalidates cached plans whenever
 that table changes -- a reassigned country cannot leave a stale plan behind (this
 is tested with a prepared statement).
 
+### The `%` operator
+
+`pc % 'GB-LS24'` is true when `pc` starts with the fragment, and `pc !% 'GB-LS24'`
+when it doesn't -- the UK type's operator, ported. It means the same as
+`pc <@ postal_prefix('GB-LS24')`, with the UK operator's leniency: a fragment that
+isn't one (no `CC-`, an unassigned country, not a prefix of that format) matches
+nothing, and `!%` matches everything, because `%` is meant for arbitrary input such
+as a search box where an error would be the wrong answer. `postal_prefix()`,
+`lower_bound()` and `upper_bound()` still raise on a bad fragment.
+
+With a constant fragment the planner rewrites `pc % 'fragment'` into
+`pc >= lo AND pc < hi`, so it uses a btree index through the ordinary sound
+strategies. `%` is deliberately *not* registered in the btree operator family (it
+is not an equivalence relation: two different codes can both match one fragment).
+Like `postal_prefix()`, the rewritten plan depends on `postal_code_country_formats`
+and is invalidated when it changes.
+
 ### Adding a country
 
 Which format a country uses is a live SQL table
@@ -405,7 +422,7 @@ design, `postal_code_country.c` for the country->format lookup, and
 
 Binary send/recv, a btree opclass, and full comparison operators are
 provided the same as for `postcode`. Partial matching is the range support
-described above; the UK type's `%` operator has not been ported.
+and the `%` operator described above.
 
 
 Credits

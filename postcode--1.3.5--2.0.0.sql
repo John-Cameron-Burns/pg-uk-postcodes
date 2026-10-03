@@ -405,3 +405,57 @@ CREATE FUNCTION postal_code_formats_changed()
 CREATE TRIGGER postal_code_country_formats_changed
    AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON postal_code_country_formats
    FOR EACH STATEMENT EXECUTE FUNCTION postal_code_formats_changed();
+
+
+-- The partial-match operator, ported from the UK type:
+--
+--   WHERE pc % 'GB-LS24'        -- pc starts with the fragment
+--   WHERE pc !% 'GB-LS24'       -- ... or doesn't
+--
+-- Same meaning as `pc <@ postal_prefix('GB-LS24')`, with the UK operator's
+-- leniency: a fragment that isn't one (no "CC-", an unassigned country, not
+-- a prefix of that format) matches nothing, and !% matches everything -- it is
+-- meant to be fed arbitrary input such as a search box, where an error would
+-- be the wrong answer. postal_prefix()/lower_bound()/upper_bound() still raise,
+-- since they are for building a query from a known-good fragment.
+--
+-- With a constant fragment the support function rewrites it at plan time into
+-- `pc >= lo AND pc < hi`, so it uses a btree index through the ordinary sound
+-- strategies; % itself is deliberately NOT registered in the btree operator
+-- family (it is not an equivalence relation -- two different codes can both
+-- match the same fragment -- and registering it was a real bug in the UK
+-- type's 1.3.0). The rewritten plan depends on postal_code_country_formats and
+-- is invalidated when it changes, like postal_prefix().
+CREATE FUNCTION postal_code_partial_support(internal)
+   RETURNS internal
+   AS 'MODULE_PATHNAME', 'postal_code_partial_support'
+   LANGUAGE C;
+
+CREATE FUNCTION postal_code_partial(postal_code, text)
+   RETURNS boolean
+   AS 'MODULE_PATHNAME', 'postal_code_partial'
+   LANGUAGE C STABLE STRICT
+   SUPPORT postal_code_partial_support;
+
+CREATE FUNCTION postal_code_not_partial(postal_code, text)
+   RETURNS boolean
+   AS 'MODULE_PATHNAME', 'postal_code_not_partial'
+   LANGUAGE C STABLE STRICT;
+
+CREATE OPERATOR % (
+   PROCEDURE = postal_code_partial,
+   LEFTARG   = postal_code,
+   RIGHTARG  = text,
+   NEGATOR   = !%,
+   RESTRICT  = matchingsel,
+   JOIN      = matchingjoinsel
+);
+
+CREATE OPERATOR !% (
+   PROCEDURE = postal_code_not_partial,
+   LEFTARG   = postal_code,
+   RIGHTARG  = text,
+   NEGATOR   = %,
+   RESTRICT  = matchingsel,
+   JOIN      = matchingjoinsel
+);
