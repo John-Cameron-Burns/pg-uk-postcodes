@@ -100,17 +100,13 @@ CREATE TEMP TABLE pt AS SELECT cc, pc, substr(pc::text, 4) AS nat FROM parsed;
 CREATE INDEX ON pt (pc);
 ANALYZE pt;     -- temp tables are never analysed by autovacuum; without this the join below is hopeless
 CREATE TEMP TABLE pref AS
-SELECT DISTINCT cc, left(nat, n) AS frag FROM pt, generate_series(1, 6) n WHERE length(nat) >= n;
+-- (a fragment's trailing space is insignificant -- text is tidied -- so prefixes ending in a space are not distinct fragments)
+SELECT DISTINCT cc, left(nat, n) AS frag FROM pt, generate_series(1, 6) n WHERE length(nat) >= n AND left(nat, n) !~ ' $';
 SELECT count(*) AS prefixes FROM pref;
--- a fragment the parser does not take is counted, not fatal
-CREATE FUNCTION pg_temp.safe_bounds(cc text, frag text, OUT lo postal_code, OUT hi postal_code) AS $$
-BEGIN
-   lo := lower_bound(cc || '-' || frag); hi := upper_bound(cc || '-' || frag);
-EXCEPTION WHEN OTHERS THEN
-   lo := NULL; hi := NULL;
-END $$ LANGUAGE plpgsql;
+-- a fragment the parser does not take gives NULL (to_postal_prefix), and is counted, not fatal
 CREATE TEMP TABLE bounds AS
-SELECT cc, frag, (pg_temp.safe_bounds(cc, frag)).lo AS lo, (pg_temp.safe_bounds(cc, frag)).hi AS hi FROM pref;
+SELECT cc, frag, lower(r) AS lo, upper(r) AS hi
+FROM (SELECT cc, frag, to_postal_prefix(cc || '-' || frag) AS r FROM pref) x;
 SELECT cc, count(*) AS fragments_not_accepted, min(frag) AS example FROM bounds WHERE lo IS NULL GROUP BY cc ORDER BY 2 DESC LIMIT 20;
 DELETE FROM bounds WHERE lo IS NULL;
 CREATE INDEX ON bounds (cc);
@@ -118,10 +114,11 @@ ANALYZE bounds;
 CREATE TEMP TABLE by_range AS
 SELECT b.cc, b.frag, count(t.pc) AS c FROM bounds b LEFT JOIN pt t ON t.pc >= b.lo AND t.pc < b.hi GROUP BY b.cc, b.frag;   -- the range alone is selective: countries lie end to end in the value space
 CREATE TEMP TABLE by_text AS
-SELECT cc, left(nat, n) AS frag, count(*) AS c FROM pt, generate_series(1, 6) n WHERE length(nat) >= n GROUP BY 1, 2;
+SELECT cc, left(nat, n) AS frag, count(*) AS c FROM pt, generate_series(1, 6) n WHERE length(nat) >= n AND left(nat, n) !~ ' $' GROUP BY 1, 2;
 SELECT count(*) AS prefixes_checked, count(*) FILTER (WHERE r.c IS DISTINCT FROM x.c) AS mismatches
 FROM by_range r JOIN by_text x USING (cc, frag);
-SELECT cc, frag, r.c AS by_range, x.c AS by_text FROM by_range r JOIN by_text x USING (cc, frag)
+SELECT cc, count(*) AS mismatching_prefixes, min(frag) AS example FROM by_range r JOIN by_text x USING (cc, frag) WHERE r.c IS DISTINCT FROM x.c GROUP BY cc ORDER BY 2 DESC;
+SELECT cc, '[' || frag || ']' AS frag, r.c AS by_range, x.c AS by_text FROM by_range r JOIN by_text x USING (cc, frag)
 WHERE r.c IS DISTINCT FROM x.c ORDER BY cc, frag LIMIT 25;
 
 \echo '=== 5. what is rejected, by shape (top shapes per country with >= 20 rejected values)'

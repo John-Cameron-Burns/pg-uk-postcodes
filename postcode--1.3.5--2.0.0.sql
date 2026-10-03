@@ -1308,6 +1308,13 @@ CREATE FUNCTION postal_prefix(text)
    LANGUAGE C STABLE STRICT
    SUPPORT postal_prefix_support;
 
+CREATE FUNCTION to_postal_prefix(text)
+   RETURNS postal_code_range
+   AS 'MODULE_PATHNAME', 'postal_code_prefix_lenient'
+   LANGUAGE C STABLE STRICT;
+COMMENT ON FUNCTION to_postal_prefix(text) IS
+   'postal_prefix() that returns NULL instead of raising when the text is not a fragment of an assigned country''s postal codes (no CC- prefix, unassigned country, not a prefix of that format).';
+
 CREATE FUNCTION postal_code_formats_changed()
    RETURNS trigger
    AS 'MODULE_PATHNAME'

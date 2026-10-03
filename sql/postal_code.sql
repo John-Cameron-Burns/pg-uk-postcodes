@@ -892,6 +892,12 @@ SELECT 'US-90210-1234'::postal_code % 'US-90210-' AS yes, 'US-90210'::postal_cod
        'US-90211-1234'::postal_code % 'US-90210-' AS no,
        'LU-L-1311'::postal_code % 'LU-L-' AS lu_yes, 'LU-1311'::postal_code % 'LU-L' AS lu_bare_yes;
 
+-- ===== to_postal_prefix(): postal_prefix() that returns NULL instead of raising ===========
+SELECT to_postal_prefix('GB-LS24') AS ok, to_postal_prefix('GB-LS24') = postal_prefix('GB-LS24') AS same_as_postal_prefix;
+SELECT t AS text, to_postal_prefix(t) AS fragment
+FROM (VALUES ('US-902'), ('CA-K1A 0'), ('FR-75'), ('XX-12'), ('90210'), ('US-9A'), ('GB-A'), ('LU-L-'), (' us - 90 ')) v(t);
+SELECT count(*) AS valid_fragments FROM (VALUES ('US-9'), ('US-9x'), ('FR-75'), ('ZZ-1')) v(t) WHERE to_postal_prefix(t) IS NOT NULL;
+
 -- ===== Built-in and user assignments =========================================
 -- What ships with the extension is separate from what users assign, so a dump
 -- can carry exactly the latter. The view shows both; a user row wins.

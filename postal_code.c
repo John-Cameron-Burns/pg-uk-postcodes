@@ -66,6 +66,7 @@ Datum postal_code_lenient  (PG_FUNCTION_ARGS);
 Datum postal_code_lower_bound (PG_FUNCTION_ARGS);
 Datum postal_code_upper_bound (PG_FUNCTION_ARGS);
 Datum postal_code_prefix (PG_FUNCTION_ARGS);
+Datum postal_code_prefix_lenient (PG_FUNCTION_ARGS);
 Datum postal_code_outcode (PG_FUNCTION_ARGS);
 Datum postal_code_prefix_support (PG_FUNCTION_ARGS);
 Datum postal_code_partial (PG_FUNCTION_ARGS);
@@ -826,6 +827,23 @@ static bool fragment_range_try (const char *str, char iso2[2], pc_format *fmt,
    *lo_pc = pc_assemble(iso2, *fmt, lo);
    *hi_pc = pc_assemble(iso2, unbounded ? (pc_format) PC_FMT_END : *fmt, unbounded ? 0 : hi);
    return true;
+}
+
+// to_postal_prefix(fragment): postal_prefix() that returns NULL for text that is not a fragment
+// (no CC-, an unassigned country, not a prefix of that format) instead of raising -- the way
+// to_postal_code() relates to ::postal_code, for checking or loading arbitrary input.
+PG_FUNCTION_INFO_V1(postal_code_prefix_lenient);
+
+Datum postal_code_prefix_lenient (PG_FUNCTION_ARGS) {
+   char iso2[2];
+   pc_format fmt;
+   postal_code lo_pc, hi_pc;
+   if (! fragment_range_try(tidy(text_to_cstring(PG_GETARG_TEXT_PP(0))), iso2, &fmt, &lo_pc, &hi_pc))
+      PG_RETURN_NULL();
+
+   Oid rngtypid = get_fn_expr_rettype(fcinfo->flinfo);
+   if (!OidIsValid(rngtypid)) elog(ERROR, "could not determine to_postal_prefix() result type");
+   return build_prefix_range(rngtypid, lo_pc, hi_pc);
 }
 
 // Plan-time version for the support functions: only for a CONSTANT, non-NULL
