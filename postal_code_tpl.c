@@ -4,7 +4,11 @@
 #include <utils/inval.h>
 #include <catalog/pg_type.h>
 
+#include <utils/lsyscache.h>
+#include <commands/extension.h>
+
 #include "postal_code_fmt.h"
+#include "postal_code_country.h"
 #include "postal_code_tpl.h"
 
 typedef struct {
@@ -37,7 +41,7 @@ bool pc_template_for_slot (int slot, pc_template *out) {
    if (!slot_plan) {
       Oid argtypes[1] = { INT4OID };
       SPIPlanPtr plan = SPI_prepare(
-         "SELECT template, 'postal_code_templates'::regclass::oid FROM postal_code_templates WHERE slot = $1",
+         psprintf("SELECT template FROM %spostal_code_templates WHERE slot = $1", pc_schema_prefix()),
          1, argtypes);
       if (!plan)
          ereport(ERROR, (errmsg("postal_code: failed to prepare template lookup (SPI error %d)", SPI_result)));
@@ -55,14 +59,13 @@ bool pc_template_for_slot (int slot, pc_template *out) {
    if (SPI_processed > 0) {
       bool isnull;
       Datum d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
-      Datum r = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &isnull);
       char *spec = TextDatumGetCString(d);
       char err[128];
       pc_template t;
       if (!pc_template_compile(spec, &t, err, sizeof err))
          ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
                          errmsg("postal_code_templates slot %d holds an invalid template \"%s\": %s", slot, spec, err)));
-      templates_relid = DatumGetObjectId(r);
+      templates_relid = get_relname_relid("postal_code_templates", get_extension_schema(get_extension_oid("postcode", false)));
       cache[slot].tpl = t;
       cache[slot].valid = true;
       *out = t;

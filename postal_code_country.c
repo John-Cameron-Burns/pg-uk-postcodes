@@ -2,6 +2,8 @@
 #include <executor/spi.h>
 #include <utils/builtins.h>
 #include <catalog/pg_type.h>
+#include <commands/extension.h>
+#include <utils/lsyscache.h>
 
 #include "postal_code_country.h"
 
@@ -12,6 +14,12 @@
 // changes underneath it (DDL, not the row-level INSERT/UPDATE this
 // table is meant for day to day).
 static SPIPlanPtr country_format_plan = NULL;
+
+const char *pc_schema_prefix (void) {
+   Oid ext = get_extension_oid("postcode", false);
+   Oid nsp = get_extension_schema(ext);
+   return psprintf("%s.", quote_identifier(get_namespace_name(nsp)));
+}
 
 char *pc_lookup_country_format (const char iso2[2], int *slot) {
    *slot = -1;
@@ -24,10 +32,11 @@ char *pc_lookup_country_format (const char iso2[2], int *slot) {
 
    if (!country_format_plan) {
       Oid argtypes[1] = { TEXTOID };
+      const char *schema = pc_schema_prefix();
       SPIPlanPtr plan = SPI_prepare(
-         "SELECT cf.format_name, t.slot FROM postal_code_country_formats cf "
-         "LEFT JOIN postal_code_templates t ON cf.format_name = 'template:' || t.template "
-         "WHERE cf.iso2 = $1",
+         psprintf("SELECT cf.format_name, t.slot FROM %spostal_code_country_formats cf "
+                  "LEFT JOIN %spostal_code_templates t ON cf.format_name = 'template:' || t.template "
+                  "WHERE cf.iso2 = $1", schema, schema),
          1, argtypes);
       if (!plan)
          ereport(ERROR, (errmsg("postal_code: failed to prepare country-format lookup (SPI error %d)",
