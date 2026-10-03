@@ -231,10 +231,30 @@ static inline postal_code pc_assemble (const char iso2[2], pc_format fmt, uint64
 }
 
 
+// Real feeds are untidy in one way this can fix without guessing: spacing.
+// Trims the ends, collapses any run of whitespace to one space, and drops a
+// space next to a hyphen, so " us - 90210 ", "L - 2226" and "SW1A  1AA" mean
+// what they obviously mean. Nothing else is touched: no characters are added,
+// removed or changed, so what this accepts is still exactly the format's own
+// grammar. Returns a copy.
+static char *tidy (const char *s) {
+   char *out = palloc(strlen(s) + 1);
+   size_t n = 0;
+   bool space = false;
+   for (; *s; s++) {
+      if (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') { space = true; continue; }
+      if (space && n > 0 && *s != '-' && out[n - 1] != '-') out[n++] = ' ';
+      space = false;
+      out[n++] = *s;
+   }
+   out[n] = '\0';
+   return out;
+}
+
 PG_FUNCTION_INFO_V1(postal_code_in);
 
 Datum postal_code_in (PG_FUNCTION_ARGS) {
-   char *str = PG_GETARG_CSTRING(0);
+   char *str = tidy(PG_GETARG_CSTRING(0));
    int32 typmod = PG_GETARG_INT32(2);       // -1, or the country the column is locked to
 
    char locked[3] = { 0, 0, 0 };
@@ -444,8 +464,8 @@ PG_FUNCTION_INFO_V1(postal_code_from_parts);
 Datum postal_code_from_parts (PG_FUNCTION_ARGS) {
    if (PG_ARGISNULL(0)) PG_RETURN_NULL();
 
-   char *postcode = text_to_cstring(PG_GETARG_TEXT_PP(0));
-   char *cc       = PG_ARGISNULL(1) ? NULL : text_to_cstring(PG_GETARG_TEXT_PP(1));
+   char *postcode = tidy(text_to_cstring(PG_GETARG_TEXT_PP(0)));
+   char *cc       = PG_ARGISNULL(1) ? NULL : tidy(text_to_cstring(PG_GETARG_TEXT_PP(1)));
 
    char country[3];
    const char *national;
@@ -521,8 +541,8 @@ PG_FUNCTION_INFO_V1(postal_code_lenient);
 Datum postal_code_lenient (PG_FUNCTION_ARGS) {
    if (PG_ARGISNULL(0)) PG_RETURN_NULL();
 
-   char *postcode = text_to_cstring(PG_GETARG_TEXT_PP(0));
-   char *cc       = PG_ARGISNULL(1) ? NULL : text_to_cstring(PG_GETARG_TEXT_PP(1));
+   char *postcode = tidy(text_to_cstring(PG_GETARG_TEXT_PP(0)));
+   char *cc       = PG_ARGISNULL(1) ? NULL : tidy(text_to_cstring(PG_GETARG_TEXT_PP(1)));
 
    postal_code pc;
    if (! lenient_build(postcode, cc, &pc)) PG_RETURN_NULL();
@@ -534,7 +554,7 @@ PG_FUNCTION_INFO_V1(postal_code_lenient_text);
 
 Datum postal_code_lenient_text (PG_FUNCTION_ARGS) {
    postal_code pc;
-   if (! lenient_build(text_to_cstring(PG_GETARG_TEXT_PP(0)), NULL, &pc)) PG_RETURN_NULL();
+   if (! lenient_build(tidy(text_to_cstring(PG_GETARG_TEXT_PP(0))), NULL, &pc)) PG_RETURN_NULL();
    PG_RETURN_POSTAL_CODE(pc);
 }
 
@@ -576,7 +596,7 @@ Datum postal_code_lower_bound (PG_FUNCTION_ARGS) {
    char iso2[2];
    uint64_t lo, hi;
    bool unbounded;
-   pc_format fmt = fragment_range(text_to_cstring(PG_GETARG_TEXT_PP(0)), iso2, &lo, &hi, &unbounded);
+   pc_format fmt = fragment_range(tidy(text_to_cstring(PG_GETARG_TEXT_PP(0))), iso2, &lo, &hi, &unbounded);
    PG_RETURN_POSTAL_CODE(pc_assemble(iso2, fmt, lo));
 }
 
@@ -594,7 +614,7 @@ Datum postal_code_upper_bound (PG_FUNCTION_ARGS) {
    char iso2[2];
    uint64_t lo, hi;
    bool unbounded;
-   pc_format fmt = fragment_range(text_to_cstring(PG_GETARG_TEXT_PP(0)), iso2, &lo, &hi, &unbounded);
+   pc_format fmt = fragment_range(tidy(text_to_cstring(PG_GETARG_TEXT_PP(0))), iso2, &lo, &hi, &unbounded);
    if (unbounded) PG_RETURN_POSTAL_CODE(pc_assemble(iso2, (pc_format) PC_FMT_END, 0));
    PG_RETURN_POSTAL_CODE(pc_assemble(iso2, fmt, hi));
 }
@@ -636,7 +656,7 @@ Datum postal_code_prefix (PG_FUNCTION_ARGS) {
    char iso2[2];
    uint64_t lo, hi;
    bool unbounded;
-   pc_format fmt = fragment_range(text_to_cstring(PG_GETARG_TEXT_PP(0)), iso2, &lo, &hi, &unbounded);
+   pc_format fmt = fragment_range(tidy(text_to_cstring(PG_GETARG_TEXT_PP(0))), iso2, &lo, &hi, &unbounded);
 
    Oid rngtypid = get_fn_expr_rettype(fcinfo->flinfo);
    if (!OidIsValid(rngtypid)) elog(ERROR, "could not determine postal_prefix() result type");
@@ -742,7 +762,7 @@ Datum postal_code_partial (PG_FUNCTION_ARGS) {
    pc_format fmt;
    postal_code lo, hi;
 
-   if (! fragment_range_try(text_to_cstring(PG_GETARG_TEXT_PP(1)), iso2, &fmt, &lo, &hi))
+   if (! fragment_range_try(tidy(text_to_cstring(PG_GETARG_TEXT_PP(1))), iso2, &fmt, &lo, &hi))
       PG_RETURN_BOOL(false);
    PG_RETURN_BOOL(pc >= lo && pc < hi);
 }
@@ -755,7 +775,7 @@ Datum postal_code_not_partial (PG_FUNCTION_ARGS) {
    pc_format fmt;
    postal_code lo, hi;
 
-   if (! fragment_range_try(text_to_cstring(PG_GETARG_TEXT_PP(1)), iso2, &fmt, &lo, &hi))
+   if (! fragment_range_try(tidy(text_to_cstring(PG_GETARG_TEXT_PP(1))), iso2, &fmt, &lo, &hi))
       PG_RETURN_BOOL(true);
    PG_RETURN_BOOL(!(pc >= lo && pc < hi));
 }

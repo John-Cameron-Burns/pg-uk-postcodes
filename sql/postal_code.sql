@@ -709,6 +709,67 @@ SELECT 'BB-BB11000'::postal_code AS bb, 'KY-KY1-1100'::postal_code AS ky;
 SELECT postal_code('XX1110', 'VG');
 SELECT remove_country_format(cc) FROM unnest(ARRAY['XG', 'XH', 'XJ']) cc;
 
+-- ===== Real-world examples: foreign registered offices in Companies House ====
+-- The postcodes of non-UK registered offices (distinct values, no company
+-- names), country first. Most are fine; NULL is the right answer for the
+-- junk ones ("NOT APPLICABLE", a UK-style code filed under Surrey).
+SELECT cc, code, to_postal_code(code, cc) AS parsed
+FROM (VALUES
+   ('AT', '1010'),
+   ('BM', 'HM19'),
+   ('CA', 'M5H 2M8'),
+   ('CA', 'V4N 5W5'),
+   ('GB', 'CP9 4PX'),
+   ('GG', 'GY1 1ZX'),
+   ('GG', 'GY1 3RH'),
+   ('GG', 'GY1 4NA'),
+   ('GG', 'GY4 6DY'),
+   ('GI', 'GX11 1AA'),
+   ('IM', 'IM1 1LB'),
+   ('IM', 'IM1 2PT'),
+   ('IM', 'IM1 2SD'),
+   ('IM', 'IM2 1QB'),
+   ('IM', 'IM2 4DF'),
+   ('IM', 'IM8 1GB'),
+   ('JE', 'JE1 0BD'),
+   ('JE', 'JE1 1AD'),
+   ('JE', 'JE1 1BX'),
+   ('JE', 'JE1 1GL'),
+   ('JE', 'JE1 1RB'),
+   ('JE', 'JE1 1SG'),
+   ('JE', 'JE1 2LH'),
+   ('JE', 'JE1 2TR'),
+   ('JE', 'JE2 3NY'),
+   ('JE', 'JE2 3QA'),
+   ('JE', 'JE2 3RA'),
+   ('JE', 'JE4 8PW'),
+   ('JE', 'JE4 8PX'),
+   ('JE', 'JE4 9WG'),
+   ('LU', '1116'),
+   ('LU', '2411'),
+   ('LU', '8070'),
+   ('LU', 'L - 2226'),
+   ('LU', 'L-1528'),
+   ('MH', '96960'),
+   ('US', '19808'),
+   ('US', '23219'),
+   ('US', '34990'),
+   ('US', '89146'),
+   ('VG', 'NOT APPLICABLE'),
+   ('VG', 'VG1110')
+) v(cc, code) ORDER BY cc, code;
+
+-- Spacing is tidied, nothing else: surrounding and doubled spaces, and spaces
+-- next to a hyphen, which is how "L - 2226" turns up in real data.
+SELECT t AS written, to_postal_code(t, cc) AS parsed
+FROM (VALUES ('LU', ' L - 2226 '), ('LU', 'L -2226'), ('US', '90210 - 1234'), ('GB', '  SW1A   1AA '),
+             ('CA', 'k1a  0b1'), ('XX', '12345'), ('VG', ' VG  1110'), ('FR', E'75008\t')) v(cc, t);
+SELECT ' us - 90210 '::postal_code AS a, E'GB-SW1A\n1AA'::postal_code AS b, 'ca - K1A  0B1'::postal_code AS c;
+SELECT lower_bound(' GB - SW1A ') AS lo, ' GB-SW1A'::postal_code % ' GB-SW ' AS matches;
+SELECT postal_code(' 90210 ', ' us ');
+SELECT 'U S-90210'::postal_code;
+SELECT 'US-90 210'::postal_code;
+
 -- ===== Built-in and user assignments =========================================
 -- What ships with the extension is separate from what users assign, so a dump
 -- can carry exactly the latter. The view shows both; a user row wins.
