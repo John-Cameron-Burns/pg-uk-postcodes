@@ -299,6 +299,26 @@ It is exactly `to_postal_code(...) IS NOT NULL`, so every per-country rule
 (Canadian excluded letters, Eircode's alphabet, ZIP+4 `0000`, ...) is enforced
 by the same parser at ingest and in `is_valid()` -- they cannot disagree.
 
+### Outcode
+
+`outcode(pc)` (and `district(pc)`, the same function) is the area part of a
+postcode **as a complete valid postcode of its own**:
+
+    SELECT outcode('GB-SW1A 1AA');       -- GB-SW1A
+    SELECT outcode('US-90210-1234');     -- US-90210
+    SELECT outcode('CA-K1A 0B1');        -- CA-K1A
+    SELECT outcode('IE-A65 F4E2');       -- IE-A65
+    SELECT outcode('BR-01310-100');      -- BR-01310
+    SELECT outcode(pc), count(*) FROM addresses GROUP BY 1;
+
+It is idempotent (an outcode is its own outcode), and the outcode sorts before
+every full code inside it. For FR, CZ and LU, where the leading digits are only
+*implicitly* an outcode, there is nothing to extract and the result is NULL
+rather than a whole code passed off as an area (the full code is required there,
+as for validity). It is also NULL for the end-of-country bound, which is not a
+postcode. `outcode()` is `IMMUTABLE` -- it reads only the value's own bits, never
+the country table -- so it can be indexed: `CREATE INDEX ON t (outcode(pc))`.
+
 ### Partial match and ranges
 
 A *fragment* is `CC-` plus a **prefix** of the national code -- `GB-LS24`, `FR-75`,

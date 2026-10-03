@@ -133,6 +133,12 @@ static bool us_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
    return true;
 }
 
+// Outcode: the ZIP5, dropping the +4.
+static uint64_t us_outcode (uint64_t payload) {
+   US_SET_PLUS4(payload, 0);
+   return payload;
+}
+
 const pc_encoder pc_us_encoder = {
    .name         = "US",
    .max_text_len = US_MAX_TEXT_LEN,
@@ -140,4 +146,5 @@ const pc_encoder pc_us_encoder = {
    .render       = us_render,
    .valid        = us_valid,
    .range        = us_range,
+   .outcode      = us_outcode,
 };

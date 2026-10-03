@@ -61,6 +61,7 @@ Datum postal_code_lenient  (PG_FUNCTION_ARGS);
 Datum postal_code_lower_bound (PG_FUNCTION_ARGS);
 Datum postal_code_upper_bound (PG_FUNCTION_ARGS);
 Datum postal_code_prefix (PG_FUNCTION_ARGS);
+Datum postal_code_outcode (PG_FUNCTION_ARGS);
 Datum postal_code_prefix_support (PG_FUNCTION_ARGS);
 Datum postal_code_formats_changed (PG_FUNCTION_ARGS);
 Datum postal_code_lenient_text (PG_FUNCTION_ARGS);
@@ -601,6 +602,26 @@ Datum postal_code_formats_changed (PG_FUNCTION_ARGS) {
 
    CacheInvalidateRelcacheByRelid(RelationGetRelid(((TriggerData *) fcinfo->context)->tg_relation));
    return PointerGetDatum(NULL);
+}
+
+
+// outcode(pc) / district(pc): the area part of a postcode, as a complete
+// valid postcode of its own ('GB-SW1A 1AA' -> 'GB-SW1A'). NULL where the
+// format has no distinct outcode (FR, CZ, LU) and for the end-of-country
+// bound, which is not a postcode. Depends only on the value's own bits --
+// the format is in them, so the country->format table is never consulted --
+// which is why it can be IMMUTABLE and used in an index.
+PG_FUNCTION_INFO_V1(postal_code_outcode);
+
+Datum postal_code_outcode (PG_FUNCTION_ARGS) {
+   postal_code pc = PG_GETARG_POSTAL_CODE(0);
+   pc_format fmt = (pc_format) GET_FORMAT(pc);
+
+   if (fmt == PC_FMT_UNKNOWN || fmt >= PC_FMT_MAX || !pc_formats[fmt] || !pc_formats[fmt]->outcode)
+      PG_RETURN_NULL();
+
+   SET_PAYLOAD(pc, pc_formats[fmt]->outcode(GET_PAYLOAD(pc)));
+   PG_RETURN_POSTAL_CODE(pc);
 }
 
 

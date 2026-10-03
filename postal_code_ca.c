@@ -271,6 +271,16 @@ static bool ca_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
    }
 }
 
+// Outcode: the FSA, dropping the LDU (and with it the presence bit, which
+// is how a bare FSA is represented).
+static uint64_t ca_outcode (uint64_t payload) {
+   CA_SET_HAS_LDU(payload, 0);
+   CA_SET_DIGIT2(payload, 0);
+   CA_SET_LETTER3(payload, 0);
+   CA_SET_DIGIT3(payload, 0);
+   return payload;
+}
+
 const pc_encoder pc_ca_encoder = {
    .name         = "CA",
    .max_text_len = CA_MAX_TEXT_LEN,
@@ -278,4 +288,5 @@ const pc_encoder pc_ca_encoder = {
    .render       = ca_render,
    .valid        = ca_valid,
    .range        = ca_range,
+   .outcode      = ca_outcode,
 };

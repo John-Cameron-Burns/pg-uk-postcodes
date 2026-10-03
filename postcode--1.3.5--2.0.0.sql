@@ -260,6 +260,27 @@ CREATE FUNCTION upper_bound(text)
    AS 'MODULE_PATHNAME', 'postal_code_upper_bound'
    LANGUAGE C STABLE STRICT;
 
+-- outcode(): the area part of a postcode, as a complete valid postcode of its
+-- own -- outcode('GB-SW1A 1AA') is 'GB-SW1A', a US ZIP+4 gives its ZIP5, a
+-- Canadian code its FSA, an Eircode its routing key, a CEP its 5-digit base.
+-- It is idempotent (an outcode is its own outcode) and NULL where the format
+-- has no distinct outcode -- FR, CZ and LU, where the leading digits are only
+-- implicitly one -- or for the end-of-country bound, which isn't a postcode.
+-- district() is the same function under its other name.
+--
+-- IMMUTABLE, unlike postal_code_in: it only reads the value's own bits (the
+-- format is stored in them), never the country->format table, so it can be
+-- used in an index: CREATE INDEX ON t (outcode(pc)).
+CREATE FUNCTION outcode(postal_code)
+   RETURNS postal_code
+   AS 'MODULE_PATHNAME', 'postal_code_outcode'
+   LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION district(postal_code)
+   RETURNS postal_code
+   AS 'MODULE_PATHNAME', 'postal_code_outcode'
+   LANGUAGE C IMMUTABLE STRICT;
+
 CREATE FUNCTION country(postal_code)
    RETURNS text
    AS 'MODULE_PATHNAME', 'postal_code_country'

@@ -191,6 +191,15 @@ static bool gb_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
    return true;
 }
 
+// Outcode: area and district, dropping sector and unit.
+static uint64_t gb_outcode (uint64_t payload) {
+   postcode p = gb_get(payload);
+   SET_SECTOR(p, 0);
+   SET_WALK1(p, 0);
+   SET_WALK2(p, 0);
+   return p;
+}
+
 const pc_encoder pc_gb_encoder = {
    .name         = "GB",
    .max_text_len = GB_MAX_TEXT_LEN,
@@ -198,4 +207,5 @@ const pc_encoder pc_gb_encoder = {
    .render       = gb_render,
    .valid        = gb_valid,
    .range        = gb_range,
+   .outcode      = gb_outcode,
 };

@@ -218,6 +218,13 @@ static bool ie_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
    }
 }
 
+// Outcode: the routing key, dropping the unique identifier.
+static uint64_t ie_outcode (uint64_t payload) {
+   SET_BITS64(payload, IE_HAS_UID_POS, 1, 0);
+   SET_BITS64(payload, IE_UID_POS, 20, 0);
+   return payload;
+}
+
 const pc_encoder pc_ie_encoder = {
    .name         = "IE",
    .max_text_len = IE_MAX_TEXT_LEN,
@@ -225,4 +232,5 @@ const pc_encoder pc_ie_encoder = {
    .render       = ie_render,
    .valid        = ie_valid,
    .range        = ie_range,
+   .outcode      = ie_outcode,
 };

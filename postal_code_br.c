@@ -160,6 +160,13 @@ static bool br_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
    return true;
 }
 
+// Outcode: the 5-digit base, dropping the suffix.
+static uint64_t br_outcode (uint64_t payload) {
+   BR_SET_SUFFIX(payload, 0);
+   BR_SET_HAS_SUFFIX(payload, 0);
+   return payload;
+}
+
 const pc_encoder pc_br_encoder = {
    .name         = "BR",
    .max_text_len = BR_MAX_TEXT_LEN,
@@ -167,4 +174,5 @@ const pc_encoder pc_br_encoder = {
    .render       = br_render,
    .valid        = br_valid,
    .range        = br_range,
+   .outcode      = br_outcode,
 };

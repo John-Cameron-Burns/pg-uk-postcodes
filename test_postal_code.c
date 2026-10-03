@@ -326,6 +326,31 @@ int main (void) {
    CHECK(!ok);
    (void) lu_prefix;
 
+   // --- outcode(): the area part, kept as a complete valid value of its own
+   static const struct { const char *cc, *full, *outcode; } oc[] = {
+      {"GB", "SW1A 1AA", "SW1A"}, {"GB", "LS24 9JT", "LS24"}, {"GB", "M1 1AE", "M1"}, {"GB", "SW1A", "SW1A"},
+      {"US", "90210-1234", "90210"}, {"US", "90210", "90210"},
+      {"CA", "K1A 0B1", "K1A"}, {"CA", "T0A", "T0A"},
+      {"IE", "A65 F4E2", "A65"}, {"IE", "D6W", "D6W"},
+      {"BR", "01310-100", "01310"}, {"BR", "08970", "08970"},
+   };
+   for (size_t i = 0; i < sizeof oc / sizeof oc[0]; i++) {
+      const pc_encoder *e = pc_formats[pc_format_by_name(oc[i].cc)];
+      postal_code full = make(oc[i].cc, oc[i].full, &ok);
+      CHECK(ok);
+      uint64_t o = e->outcode(GET_PAYLOAD(full));
+      char txt[32];
+      e->render(o, txt);
+      if (strcmp(txt, oc[i].outcode) != 0) { printf("FAIL outcode %s '%s': got '%s' want '%s'\n", oc[i].cc, oc[i].full, txt, oc[i].outcode); failures++; }
+      CHECK(e->valid(o));                       // an outcode is a real value, not a bit pattern
+      CHECK(e->outcode(o) == o);                // idempotent
+      CHECK(o <= GET_PAYLOAD(full));            // sorts at or before the codes inside it
+   }
+   // no distinct outcode where the leading digits are only implicitly one
+   CHECK(pc_formats[pc_format_by_name("FR")]->outcode == NULL);
+   CHECK(pc_formats[pc_format_by_name("CZ")]->outcode == NULL);
+   CHECK(pc_formats[pc_format_by_name("LU")]->outcode == NULL);
+
    if (failures == 0) printf("all tests passed\n");
    else printf("%d failure(s)\n", failures);
    return failures ? 1 : 0;

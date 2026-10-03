@@ -110,6 +110,16 @@ typedef struct {
    // format. May be NULL for a format that doesn't support ranges yet.
    __attribute__((warn_unused_result))
    bool     (*range)  (const char *fragment, uint64_t *lo, uint64_t *hi, bool *unbounded);
+
+   // The outcode of a value, as a complete valid value of its own: the part
+   // that names the delivery area, with the incode dropped (GB "SW1A 1AA" ->
+   // "SW1A", a US ZIP+4 -> its ZIP5, CA "K1A 0B1" -> "K1A", an Eircode ->
+   // its routing key, a CEP -> its 5-digit base). Takes and returns a
+   // payload; idempotent, and an outcode is its own outcode. NULL for a
+   // format with no distinct outcode -- where the leading digits are only
+   // implicitly one (FR, CZ, LU) there is nothing to extract, and outcode()
+   // says NULL rather than pretend a whole code is an area.
+   uint64_t (*outcode) (uint64_t payload);
 } pc_encoder;
 
 // Array of pointers, not values: a pc_encoder can only be wired in

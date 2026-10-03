@@ -953,6 +953,84 @@ SELECT count(*) AS joined FROM (VALUES ('US-9'), ('CA-T')) f(frag) JOIN addr a O
       6
 (1 row)
 
+-- ===== outcode() and district() ==============================================
+-- The area part of a postcode, as a complete valid postcode of its own.
+-- district() is the same function under its other name.
+SELECT outcode('GB-SW1A 1AA') AS gb, outcode('US-90210-1234') AS us, outcode('CA-K1A 0B1') AS ca,
+       outcode('IE-A65 F4E2') AS ie, outcode('BR-01310-100') AS br;
+   gb    |    us    |   ca   |   ie   |    br    
+---------+----------+--------+--------+----------
+ GB-SW1A | US-90210 | CA-K1A | IE-A65 | BR-01310
+(1 row)
+
+SELECT district('GB-LS24 9JT') AS district, district('GB-LS24 9JT') = outcode('GB-LS24 9JT') AS same_function;
+ district | same_function 
+----------+---------------
+ GB-LS24  | t
+(1 row)
+
+-- idempotent: an outcode is its own outcode
+SELECT outcode('GB-SW1A') AS gb, outcode(outcode('IE-A65 F4E2')) AS ie, outcode('US-90210') AS us;
+   gb    |   ie   |    us    
+---------+--------+----------
+ GB-SW1A | IE-A65 | US-90210
+(1 row)
+
+-- NULL where the leading digits are only implicitly an outcode (FR, CZ, LU),
+-- and for the end-of-country bound, which is not a postcode
+SELECT outcode('FR-75001') IS NULL AS fr, outcode('CZ-110 00') IS NULL AS cz,
+       outcode('LU-L-1311') IS NULL AS lu, outcode('US-~') IS NULL AS end_of_country_bound;
+ fr | cz | lu | end_of_country_bound 
+----+----+----+----------------------
+ t  | t  | t  | t
+(1 row)
+
+-- full postcodes group by their outcode
+CREATE TEMP TABLE full_codes (pc postal_code);
+INSERT INTO full_codes VALUES ('GB-SW1A 1AA'), ('GB-SW1A 2AB'), ('GB-SW1B 1AA'), ('GB-LS1 4AP'),
+   ('US-90210-1234'), ('US-90210-5678'), ('US-90211'), ('CA-K1A 0B1'), ('CA-K1A 0B2'), ('CA-K1B 0A1'),
+   ('IE-A65 F4E2'), ('IE-A65 TV22'), ('FR-75001'), ('FR-75002');
+SELECT outcode(pc) AS outcode, count(*) FROM full_codes GROUP BY 1 ORDER BY 1 NULLS LAST;
+ outcode  | count 
+----------+-------
+ CA-K1A   |     2
+ CA-K1B   |     1
+ GB-LS1   |     1
+ GB-SW1A  |     2
+ GB-SW1B  |     1
+ IE-A65   |     2
+ US-90210 |     2
+ US-90211 |     1
+          |     2
+(9 rows)
+
+-- properties that must hold for every value in the fixture
+SELECT count(*) FILTER (WHERE outcode(pc) IS NOT NULL) AS with_outcode,
+       count(*) FILTER (WHERE outcode(pc) IS NULL) AS without,
+       count(*) FILTER (WHERE outcode(pc) > pc) AS outcode_sorts_after_its_code,
+       count(*) FILTER (WHERE outcode(outcode(pc)) IS DISTINCT FROM outcode(pc)) AS not_idempotent,
+       count(*) FILTER (WHERE outcode(pc) IS NOT NULL AND NOT (pc <@ postal_prefix(outcode(pc)::text))) AS not_in_its_outcodes_range,
+       count(*) FILTER (WHERE outcode(pc) IS NOT NULL AND outcode(pc) <> lower_bound(outcode(pc)::text)) AS outcode_not_first_of_its_range
+FROM (SELECT pc FROM addr UNION ALL SELECT pc FROM full_codes) all_codes;
+ with_outcode | without | outcode_sorts_after_its_code | not_idempotent | not_in_its_outcodes_range | outcode_not_first_of_its_range 
+--------------+---------+------------------------------+----------------+---------------------------+--------------------------------
+           48 |       9 |                            0 |              0 |                         0 |                              0
+(1 row)
+
+-- IMMUTABLE (it only reads the value's own bits, never the country table), so
+-- unlike postal_code(...) it can be indexed
+CREATE INDEX addr_outcode_idx ON addr (outcode(pc));
+SET enable_seqscan = off;
+SET enable_bitmapscan = off;
+SELECT pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE outcode(pc) = 'GB-PH26' $q$) AS outcode_expression_index_used;
+ outcode_expression_index_used 
+-------------------------------
+ t
+(1 row)
+
+RESET enable_seqscan;
+RESET enable_bitmapscan;
+DROP INDEX addr_outcode_idx;
 -- THE SAFETY NET. Folding postal_prefix() into a plan would let a cached
 -- plan keep a range computed under a country assignment that has since
 -- changed, so the folded plan depends on postal_code_country_formats and a
