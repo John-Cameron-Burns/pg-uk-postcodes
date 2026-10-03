@@ -474,11 +474,32 @@ binary send/receive.
   *new* template: new values follow it, and values already stored go on reading as
   they were written (and are different values -- `PL-00-950` under `NN-NNN` is not
   equal to `PL-00950` under `NNNNN`). Countries with the same shape share a slot.
-* **Dump and restore.** `postal_code_templates` is dumped with the database,
-  because values can't be read without it. The *assignments* of countries to
-  formats (`postal_code_country_formats`) are not: after a restore, re-run
-  `add_country_template()` / `add_country_format()` for the countries you added,
-  which reuses the existing slots. Values already stored are unaffected.
+* **Dump and restore.** Everything you add survives a dump and restore: the
+  templates (`postal_code_templates`) and your country assignments
+  (`postal_code_user_countries`) are dumped with the database. What ships with the
+  extension (`postal_code_builtin_countries`) is recreated by `CREATE EXTENSION`
+  and is not. `postal_code_country_formats` is the view that merges the two (a
+  user row wins; its `builtin` column says which each row is). Change assignments
+  only through `add_country_format()`, `add_country_template()` and
+  `remove_country_format()` -- removing a built-in assignment records that fact
+  rather than deleting the shipped row.
+
+  **One restore caveat.** The type's text input needs the country assignments, and
+  `pg_restore` orders table data by name, so a table that sorts before
+  `postal_code_user_countries` (say `addr`) can be loaded first and fail with
+  `"PL" is not a supported country code`. Restore the extension's own data first,
+  by reordering the restore list (tested):
+
+      pg_restore -l db.dump > all.list
+      grep -E 'TABLE DATA public postal_code_(formats|templates|user_countries) ' all.list > cfg.list
+      awk -v cfg=cfg.list 'BEGIN{while((getline l < cfg)>0) c=c l "\n"}
+          /TABLE DATA public postal_code_(formats|templates|user_countries) /{next}
+          {print} / EXTENSION - postcode( |$)/{printf "%s", c}' all.list > ordered.list
+      createdb -T template0 newdb
+      pg_restore -L ordered.list -d newdb db.dump
+
+  (Values already *stored* never need any of this; it is only the text form read
+  back from a plain dump.)
 
 One consequence worth knowing: `postal_code_in`/`postal_code(text, text)`
 are declared `STABLE`, not `IMMUTABLE`, precisely because their result can

@@ -1747,6 +1747,89 @@ SELECT add_country_template('PL', 'NNNNNNNNNN');
 ERROR:  all 47 postal_code template slots are in use
 CONTEXT:  PL/pgSQL function add_country_template(text,text) line 14 at RAISE
 ROLLBACK;
+-- ===== Built-in and user assignments =========================================
+-- What ships with the extension is separate from what users assign, so a dump
+-- can carry exactly the latter. The view shows both; a user row wins.
+SELECT iso2, format_name, builtin FROM postal_code_country_formats WHERE iso2 IN ('US', 'GB', 'GG', 'IE') ORDER BY iso2;
+ iso2 | format_name | builtin 
+------+-------------+---------
+ GB   | GB          | t
+ GG   | GB          | t
+ IE   | IE          | t
+ US   | US          | t
+(4 rows)
+
+BEGIN;
+SELECT add_country_format('GG', 'FR');            -- override a built-in assignment
+ add_country_format 
+--------------------
+ 
+(1 row)
+
+SELECT iso2, format_name, builtin FROM postal_code_country_formats WHERE iso2 = 'GG';
+ iso2 | format_name | builtin 
+------+-------------+---------
+ GG   | FR          | f
+(1 row)
+
+SELECT remove_country_format('IE');               -- removing a built-in one leaves a tombstone
+ remove_country_format 
+-----------------------
+ 
+(1 row)
+
+SELECT count(*) AS ie_rows FROM postal_code_country_formats WHERE iso2 = 'IE';
+ ie_rows 
+---------
+       0
+(1 row)
+
+SAVEPOINT s;
+SELECT 'IE-D02'::postal_code;
+ERROR:  "IE" is not a supported country code
+LINE 1: SELECT 'IE-D02'::postal_code;
+               ^
+HINT:  see postal_code_country_formats, or add one with add_country_format()
+ROLLBACK TO s;
+SELECT iso2, format_name FROM postal_code_user_countries WHERE iso2 IN ('GG', 'IE') ORDER BY iso2;
+ iso2 | format_name 
+------+-------------
+ GG   | FR
+ IE   | 
+(2 rows)
+
+SELECT add_country_format('IE', 'IE');            -- and it can be put back
+ add_country_format 
+--------------------
+ 
+(1 row)
+
+SELECT 'IE-D02'::postal_code;
+ postal_code 
+-------------
+ IE-D02
+(1 row)
+
+SELECT remove_country_format('GG');
+ remove_country_format 
+-----------------------
+ 
+(1 row)
+
+SELECT remove_country_format('GG');               -- (removing twice is harmless)
+ remove_country_format 
+-----------------------
+ 
+(1 row)
+
+ROLLBACK;
+SELECT iso2, format_name, builtin FROM postal_code_country_formats WHERE iso2 IN ('GG', 'IE') ORDER BY iso2;
+ iso2 | format_name | builtin 
+------+-------------+---------
+ GG   | GB          | t
+ IE   | IE          | t
+(2 rows)
+
 -- ===== outcode() and district() ==============================================
 -- The area part of a postcode, as a complete valid postcode of its own.
 -- district() is the same function under its other name.

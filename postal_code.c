@@ -696,7 +696,7 @@ static bool plan_fragment (SupportRequestSimplify *req, Node *fragexpr, Oid func
    if (req->root == NULL) return false;
    if (!IsA(fragexpr, Const) || ((Const *) fragexpr)->constisnull) return false;
 
-   Oid relid = get_relname_relid("postal_code_country_formats", get_func_namespace(funcid));
+   Oid relid = get_relname_relid("postal_code_user_countries", get_func_namespace(funcid));
    if (!OidIsValid(relid)) return false;
 
    char iso2[2];
@@ -798,7 +798,7 @@ Datum postal_code_partial_support (PG_FUNCTION_ARGS) {
    PG_RETURN_POINTER(make_andclause(list_make2(ge, lt)));
 }
 
-// Statement-level trigger on postal_code_country_formats: DML does not
+// Statement-level trigger on postal_code_user_countries (and the templates table): DML does not
 // normally invalidate cached plans that depend on a table (only schema
 // changes do), so say so explicitly. This is what makes the plan-time
 // folding in postal_code_prefix_support() safe.
@@ -860,7 +860,7 @@ Datum postal_code_outcode (PG_FUNCTION_ARGS) {
 //
 // typmod_in deliberately validates only the SHAPE (two letters), not whether
 // the country is currently assigned a format: a column definition must be
-// restorable from a dump before postal_code_country_formats' data is, and a
+// restorable from a dump before the country assignments' data is, and a
 // lock to a country nothing is assigned to is harmless -- every insert into
 // it fails loudly instead.
 PG_FUNCTION_INFO_V1(postal_code_typmod_in);

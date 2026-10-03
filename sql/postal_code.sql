@@ -680,6 +680,26 @@ SELECT count(*) AS slots, min(slot), max(slot) FROM postal_code_templates;
 SELECT add_country_template('PL', 'NNNNNNNNNN');
 ROLLBACK;
 
+-- ===== Built-in and user assignments =========================================
+-- What ships with the extension is separate from what users assign, so a dump
+-- can carry exactly the latter. The view shows both; a user row wins.
+SELECT iso2, format_name, builtin FROM postal_code_country_formats WHERE iso2 IN ('US', 'GB', 'GG', 'IE') ORDER BY iso2;
+BEGIN;
+SELECT add_country_format('GG', 'FR');            -- override a built-in assignment
+SELECT iso2, format_name, builtin FROM postal_code_country_formats WHERE iso2 = 'GG';
+SELECT remove_country_format('IE');               -- removing a built-in one leaves a tombstone
+SELECT count(*) AS ie_rows FROM postal_code_country_formats WHERE iso2 = 'IE';
+SAVEPOINT s;
+SELECT 'IE-D02'::postal_code;
+ROLLBACK TO s;
+SELECT iso2, format_name FROM postal_code_user_countries WHERE iso2 IN ('GG', 'IE') ORDER BY iso2;
+SELECT add_country_format('IE', 'IE');            -- and it can be put back
+SELECT 'IE-D02'::postal_code;
+SELECT remove_country_format('GG');
+SELECT remove_country_format('GG');               -- (removing twice is harmless)
+ROLLBACK;
+SELECT iso2, format_name, builtin FROM postal_code_country_formats WHERE iso2 IN ('GG', 'IE') ORDER BY iso2;
+
 -- ===== outcode() and district() ==============================================
 -- The area part of a postcode, as a complete valid postcode of its own.
 -- district() is the same function under its other name.

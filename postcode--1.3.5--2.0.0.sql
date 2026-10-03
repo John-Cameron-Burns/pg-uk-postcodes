@@ -352,19 +352,47 @@ INSERT INTO postal_code_formats (name, description) VALUES
    ('GB', 'United Kingdom: wraps the postcode type''s 32-bit layout; the outcode alone is a valid value'),
    ('IE', 'Ireland: Eircode routing key, optionally with the 4-character unique identifier');
 
-CREATE TABLE postal_code_country_formats (
+-- Country assignments are split in two so that a dump can carry exactly the
+-- ones a user made: postal_code_builtin_countries is what this extension
+-- ships (recreated by CREATE EXTENSION, never dumped), postal_code_user_countries
+-- is what add_country_format()/add_country_template()/remove_country_format()
+-- write (dumped, and restored over the top). postal_code_country_formats is
+-- the view everything reads: a user row wins over a built-in one.
+CREATE TABLE postal_code_builtin_countries (
    iso2        text PRIMARY KEY CHECK (iso2 ~ '^[A-Z]{2}$'),
-   format_name text NOT NULL REFERENCES postal_code_formats(name),
-   assigned_at timestamptz NOT NULL DEFAULT now()
+   format_name text NOT NULL REFERENCES postal_code_formats(name)
 );
-COMMENT ON TABLE postal_code_country_formats IS
-   'Which format a given ISO 3166-1 alpha-2 country currently uses for NEW postal_code values -- see add_country_format()/remove_country_format(). Decoding an existing stored value never consults this table: the format is already in the value''s own bits (see postal_code_fmt.h), so reassigning a country here has no effect on postal_code values already written under its old format.';
+COMMENT ON TABLE postal_code_builtin_countries IS
+   'The country -> format assignments this extension ships. Not dumped, and not for editing: use add_country_format() / remove_country_format(), which record your change in postal_code_user_countries, or read postal_code_country_formats for the result.';
 
-INSERT INTO postal_code_country_formats (iso2, format_name) VALUES
+INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('BR', 'BR'), ('CA', 'CA'), ('CZ', 'CZ'), ('FR', 'FR'), ('LU', 'LU'), ('US', 'US'),
    -- the Crown Dependencies' areas (GY, IM, JE) are already part of the UK layout
    ('GB', 'GB'), ('GG', 'GB'), ('IM', 'GB'), ('JE', 'GB'),
    ('IE', 'IE');
+
+-- format_name NULL is a tombstone: "this built-in assignment has been removed".
+CREATE TABLE postal_code_user_countries (
+   iso2        text PRIMARY KEY CHECK (iso2 ~ '^[A-Z]{2}$'),
+   format_name text REFERENCES postal_code_formats(name),
+   assigned_at timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE postal_code_user_countries IS
+   'Country -> format assignments made with add_country_format() / add_country_template() / remove_country_format(), on top of postal_code_builtin_countries (a NULL format_name means a built-in assignment was removed). Included in pg_dump, so assignments survive a dump and restore. Edit through the functions, not by hand.';
+SELECT pg_extension_config_dump('postal_code_user_countries', '');
+-- the formats these refer to that a user created (templates); the built-in ones come with the extension
+SELECT pg_extension_config_dump('postal_code_formats', $$WHERE name LIKE 'template:%'$$);
+
+CREATE VIEW postal_code_country_formats AS
+   SELECT u.iso2, u.format_name, false AS builtin, u.assigned_at
+   FROM postal_code_user_countries u
+   WHERE u.format_name IS NOT NULL
+   UNION ALL
+   SELECT b.iso2, b.format_name, true, NULL::timestamptz
+   FROM postal_code_builtin_countries b
+   WHERE NOT EXISTS (SELECT 1 FROM postal_code_user_countries u WHERE u.iso2 = b.iso2);
+COMMENT ON VIEW postal_code_country_formats IS
+   'Which format a given ISO 3166-1 alpha-2 country currently uses for NEW postal_code values -- see add_country_format() / add_country_template() / remove_country_format(). Decoding an existing stored value never consults this: the format is already in the value''s own bits (see postal_code_fmt.h), so reassigning a country here has no effect on postal_code values already written under its old format. builtin says whether the assignment ships with the extension or was made by a user.';
 
 CREATE FUNCTION add_country_format(cc text, format_name text)
    RETURNS void
@@ -379,7 +407,7 @@ BEGIN
       RAISE EXCEPTION 'unknown postal_code format %, must be one of: %',
          format_name, (SELECT string_agg(name, ', ' ORDER BY name) FROM postal_code_formats);
    END IF;
-   INSERT INTO postal_code_country_formats (iso2, format_name)
+   INSERT INTO postal_code_user_countries (iso2, format_name)
    VALUES (norm_cc, format_name)
    ON CONFLICT (iso2) DO UPDATE SET format_name = EXCLUDED.format_name, assigned_at = now();
 END;
@@ -390,8 +418,16 @@ COMMENT ON FUNCTION add_country_format(text, text) IS
 CREATE FUNCTION remove_country_format(cc text)
    RETURNS void
    LANGUAGE plpgsql AS $$
+DECLARE
+   norm_cc text := upper(cc);
 BEGIN
-   DELETE FROM postal_code_country_formats WHERE iso2 = upper(cc);
+   IF EXISTS (SELECT 1 FROM postal_code_builtin_countries WHERE iso2 = norm_cc) THEN
+      -- a shipped assignment can't be deleted, only overridden: leave a tombstone
+      INSERT INTO postal_code_user_countries (iso2, format_name) VALUES (norm_cc, NULL)
+      ON CONFLICT (iso2) DO UPDATE SET format_name = NULL, assigned_at = now();
+   ELSE
+      DELETE FROM postal_code_user_countries WHERE iso2 = norm_cc;
+   END IF;
 END;
 $$;
 COMMENT ON FUNCTION remove_country_format(text) IS
@@ -503,7 +539,7 @@ CREATE TYPE postal_code_range AS RANGE (subtype = postal_code);
 -- fragment into a constant range at plan time, so that PostgreSQL's own
 -- rewrite of `col <@ <constant range>` into btree conditions applies and a
 -- prefix search uses the index. To keep that safe the folded plan is made to
--- depend on postal_code_country_formats, and the trigger below invalidates
+-- depend on postal_code_user_countries, and the trigger below invalidates
 -- such plans whenever that table changes.
 CREATE FUNCTION postal_prefix_support(internal)
    RETURNS internal
@@ -521,8 +557,8 @@ CREATE FUNCTION postal_code_formats_changed()
    AS 'MODULE_PATHNAME'
    LANGUAGE C;
 
-CREATE TRIGGER postal_code_country_formats_changed
-   AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON postal_code_country_formats
+CREATE TRIGGER postal_code_user_countries_changed
+   AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON postal_code_user_countries
    FOR EACH STATEMENT EXECUTE FUNCTION postal_code_formats_changed();
 -- ... and likewise the template cache: a template added in a transaction
 -- that then rolls back must not linger in other backends' caches.
@@ -548,7 +584,7 @@ CREATE TRIGGER postal_code_templates_changed
 -- strategies; % itself is deliberately NOT registered in the btree operator
 -- family (it is not an equivalence relation -- two different codes can both
 -- match the same fragment -- and registering it was a real bug in the UK
--- type's 1.3.0). The rewritten plan depends on postal_code_country_formats and
+-- type's 1.3.0). The rewritten plan depends on postal_code_user_countries and
 -- is invalidated when it changes, like postal_prefix().
 CREATE FUNCTION postal_code_partial_support(internal)
    RETURNS internal
