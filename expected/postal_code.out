@@ -2302,6 +2302,40 @@ WHERE e.extname = 'postcode' ORDER BY u.cfg::regclass::text;
  postal_code_user_countries | 
 (3 rows)
 
+-- ===== Fragments that end in a separator, or are just a country's own marker ====
+-- Every text prefix of a code is a fragment, including one that stops right after the hyphen
+-- of a ZIP+4 or CEP, and "L-" for Luxembourg.
+SELECT lower_bound('US-90210-') AS lo, upper_bound('US-90210-') AS hi, lower_bound('US-90210') = lower_bound('US-90210-') AS same_as_bare;
+    lo    |    hi    | same_as_bare 
+----------+----------+--------------
+ US-90210 | US-90211 | t
+(1 row)
+
+SELECT lower_bound('US-99999-') AS lo, upper_bound('US-99999-') AS hi_is_the_end_of_the_country;
+    lo    | hi_is_the_end_of_the_country 
+----------+------------------------------
+ US-99999 | US-~
+(1 row)
+
+SELECT lower_bound('BR-01310-') AS lo, upper_bound('BR-01310-') AS hi, upper_bound('BR-01310') = upper_bound('BR-01310-') AS same_as_bare;
+    lo    |    hi    | same_as_bare 
+----------+----------+--------------
+ BR-01310 | BR-01311 | t
+(1 row)
+
+SELECT lower_bound('LU-L') AS lo, upper_bound('LU-L') AS hi_is_the_end_of_the_country, lower_bound('LU-L-') = lower_bound('LU-L') AS same;
+    lo     | hi_is_the_end_of_the_country | same 
+-----------+------------------------------+------
+ LU-L-0000 | LU-~                         | t
+(1 row)
+
+SELECT 'US-90210-1234'::postal_code % 'US-90210-' AS yes, 'US-90211'::postal_code % 'US-90210-' AS no,
+       'LU-L-1311'::postal_code % 'LU-L-' AS lu_yes, 'LU-1311'::postal_code % 'LU-L' AS lu_bare_yes;
+ yes | no | lu_yes | lu_bare_yes 
+-----+----+--------+-------------
+ t   | f  | t      | t
+(1 row)
+
 -- ===== Built-in and user assignments =========================================
 -- What ships with the extension is separate from what users assign, so a dump
 -- can carry exactly the latter. The view shows both; a user row wins.

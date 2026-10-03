@@ -76,6 +76,11 @@ static bool lu_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
    int k = 0;
    uint32_t p = 0;
    while (k < 4 && is_digit(s[k])) p = p * 10 + (uint32_t) (s[k++] - '0');
+   if (k == 0 && s != str && *s == '\0') {   // just "L" or "L-": every Luxembourg code
+      *lo = 0;
+      *unbounded = true;
+      return true;
+   }
    if (k == 0 || s[k] != '\0') return false;
 
    uint32_t l, h;

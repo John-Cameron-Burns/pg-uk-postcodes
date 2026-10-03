@@ -132,7 +132,9 @@ static bool br_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
    if (k == 0) return false;
 
    *unbounded = false;
-   if (str[k] == '\0') {
+   // "01310" and "01310-" (a full base and its hyphen) are the same fragment: the base and every suffix on it
+   bool bare = str[k] == '\0' || (k == 5 && str[k] == '-' && str[k + 1] == '\0');
+   if (bare) {
       uint32_t zl, zh;
       pc_digit_prefix_bounds(z, k, 5, &zl, &zh);
       *lo = (uint64_t) zl << BR_BASE_POS;

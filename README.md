@@ -507,11 +507,12 @@ country is a new template for it (old values keep reading as written), done thro
     SELECT add_country_template('XB', 'NNNN[ AA]');       -- 4 digits, optionally + 2 letters
     SELECT add_country_template('XC', 'NNN[-NNNN]');      -- 3 digits, optionally + 4
     SELECT add_country_template('XD', 'CCNNNN');          -- the country's own letters, then 4 digits
+    SELECT add_country_template('XE', '[A]NNNN[AAA]');    -- an optional province letter in front (Argentina)
     SELECT 'xa-00950'::postal_code;                       -- XA-00-950
 
 A template is written with `N` (a digit), `A` (a letter), `X` (either), the
 separators space and hyphen, at most one optional `[ ... ]` group at the end, and
-optionally `CC` first. Separators are always written and optional on input, and
+optionally `CC` first or a leading `[A]` group. Separators are always written and optional on input, and
 letters are accepted in either case. Everything else works as for the built-in
 formats, with nothing more to configure: ordering is text ordering
 (`'PL-00-949' < 'PL-00-950'`, countries in ISO order), prefix ranges,
@@ -527,6 +528,11 @@ send/receive.
   value, written in the UPU form `VG-1110` -- as Latvia's `LV-1050` is. (A hyphen
   after the country, as in `LV-1050`, needs no template support: the type already
   strips it.)
+* **A leading optional group of letters.** Argentina writes `1832`, `B1832` (province
+  letter) and `B1832GMR` (the full CPA); `[A]NNNN[AAA]` holds all three. The leading
+  group must be letters and the code after it must start with a digit (`N`), so codes
+  without the group sort first -- digits sort before letters -- and text order still
+  holds. It cannot be combined with `CC`.
 * **The optional group is the incode.** The part before it is a value of its own and
   is the `outcode()`; it sorts just before every value that extends it (`NL-1012`
   before `NL-1012 AA`). A template with no optional group has no outcode, like
