@@ -939,7 +939,8 @@ INSERT INTO postal_code_templates (slot, template, builtin) VALUES
    (44, 'NNN[-NNN]', true),
    (45, 'NNN[N]', true),
    (46, 'XNNNN', true),
-   (47, 'NNNNN[ NNNNN]', true);
+   (47, 'NNNNN[ NNNNN]', true),
+   (48, 'NNNN[N]', true);
 INSERT INTO postal_code_formats (name, description)
    SELECT 'template:' || template, 'Template ' || template FROM postal_code_templates WHERE builtin;
 INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
@@ -972,7 +973,7 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('CL', 'template:NNN-NNNN'),
    ('CN', 'template:NNNNNN'),
    ('CO', 'template:NNNNNN'),
-   ('CR', 'template:NNNNN'),
+   ('CR', 'template:NNNNN[-NNNN]'),
    ('CU', 'template:NNNNN'),
    ('CV', 'template:NNNN'),
    ('CX', 'template:NNNN'),
@@ -1070,7 +1071,7 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('NU', 'template:NNNN'),
    ('NZ', 'template:NNNN'),
    ('OM', 'template:NNN'),
-   ('PA', 'template:NNNNN'),
+   ('PA', 'template:NNNN[N]'),
    ('PE', 'template:NNNNN'),
    ('PF', 'FR'),
    ('PG', 'template:NNN'),
@@ -1136,7 +1137,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('AG', 'Antigua and Barbuda
 ', 'no postal codes', NULL),
    ('AI', 'Anguilla
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'a single code (AI-2640, written with the country hyphen); the format accepts any four digits'),
    ('AL', 'Albania
 ', 'GeoNames data', NULL),
    ('AM', 'Armenia
@@ -1144,9 +1145,9 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('AO', 'Angola
 ', 'no postal codes', NULL),
    ('AQ', 'British Antarctic Territory
-', 'Wikipedia', NULL),
+', 'Wikipedia', 'a single code (BIQQ 1ZZ); the format accepts any code of that shape'),
    ('AR', 'Argentina
-', 'see note', 'NNNN, the minimum and the form GeoNames has; the 1999 ANNNNAAA form (CPA) is not accepted'),
+', 'see note', 'NNNN, the minimum and the form GeoNames has; the 1999 ANNNNAAA form (CPA) and ANNNN are not accepted'),
    ('AS', 'American Samoa
 ', 'GeoNames data', NULL),
    ('AT', 'Austria
@@ -1178,9 +1179,9 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('BJ', 'Benin
 ', 'no postal codes', NULL),
    ('BL', 'Saint Barthélemy
-', 'Wikipedia', NULL),
+', 'Wikipedia', '97133; the French format accepts any five digits'),
    ('BM', 'Bermuda
-', 'see note', 'AA NN; the second pair is sometimes letters, so X'),
+', 'see note', 'AA NN; the second pair is sometimes letters, so X; Wikipedia lists AA NN and AA AA'),
    ('BN', 'Brunei
 ', 'Wikipedia', NULL),
    ('BO', 'Bolivia
@@ -1225,7 +1226,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('CO', 'Colombia
 ', 'GeoNames data', NULL),
    ('CR', 'Costa Rica
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'five digits; Wikipedia also lists a NNNNN-NNNN street-level extension, taken as the optional tail'),
    ('CU', 'Cuba
 ', 'Wikipedia', NULL),
    ('CV', 'Cape Verde
@@ -1239,7 +1240,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('CZ', 'Czech Republic
 ', 'built in', NULL),
    ('DE', 'Germany
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'five digits; Wikipedia also lists the 2- and 4-digit regional leading digits (Leitregion), which are prefixes, not codes: search them with the % operator'),
    ('DJ', 'Djibouti
 ', 'no postal codes', NULL),
    ('DK', 'Denmark
@@ -1268,7 +1269,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('FJ', 'Fiji
 ', 'no postal codes', NULL),
    ('FK', 'Falkland Islands
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'a single code (FIQQ 1ZZ); the format accepts any code of that shape'),
    ('FM', 'Micronesia
 ', 'GeoNames data', NULL),
    ('FO', 'Faroe Islands
@@ -1284,11 +1285,11 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('GE', 'Georgia
 ', 'Wikipedia', NULL),
    ('GF', 'French Guiana
-', 'GeoNames data', NULL),
+', 'GeoNames data', '973NN; the French format accepts any five digits'),
    ('GG', 'Guernsey
 ', 'built in', NULL),
    ('GH', 'Ghana
-', 'Wikipedia', NULL),
+', 'Wikipedia', 'Wikipedia lists A?NNN, A?NNNN and A?NNNNN (5, 6 and 7 characters); a template can hold only two lengths, so 5 and 7 are accepted'),
    ('GI', 'Gibraltar
 ', 'see note', 'GX11 1AA, the UK format'),
    ('GL', 'Greenland
@@ -1298,13 +1299,13 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('GN', 'Guinea
 ', 'Wikipedia', NULL),
    ('GP', 'Guadeloupe
-', 'GeoNames data', NULL),
+', 'GeoNames data', '971NN; the French format accepts any five digits'),
    ('GQ', 'Equatorial Guinea
 ', 'no postal codes', NULL),
    ('GR', 'Greece
 ', 'Wikipedia', NULL),
    ('GS', 'South Georgia and the South Sandwich Islands
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'a single code (SIQQ 1ZZ); the format accepts any code of that shape'),
    ('GT', 'Guatemala
 ', 'GeoNames data', NULL),
    ('GU', 'Guam
@@ -1318,7 +1319,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('HM', 'Heard and McDonald Islands
 ', 'GeoNames data', NULL),
    ('HN', 'Honduras
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'five digits (GeoNames); Wikipedia also lists an older AANNNN form, not accepted'),
    ('HR', 'Croatia
 ', 'GeoNames data', NULL),
    ('HT', 'Haiti
@@ -1336,7 +1337,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('IN', 'India
 ', 'GeoNames data', NULL),
    ('IO', 'British Indian Ocean Territory
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'a single code (BBND 1ZZ); the format accepts any code of that shape'),
    ('IQ', 'Iraq
 ', 'Wikipedia', NULL),
    ('IR', 'Iran
@@ -1400,13 +1401,13 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('MA', 'Morocco
 ', 'GeoNames data', NULL),
    ('MC', 'Monaco
-', 'GeoNames data', NULL),
+', 'GeoNames data', '980NN; the format accepts any five digits'),
    ('MD', 'Moldova
 ', 'GeoNames data', NULL),
    ('ME', 'Montenegro
 ', 'Wikipedia', NULL),
    ('MF', 'Saint Martin
-', 'Wikipedia', NULL),
+', 'Wikipedia', '97150; the French format accepts any five digits'),
    ('MG', 'Madagascar
 ', 'Wikipedia', NULL),
    ('MH', 'Marshall Islands
@@ -1424,15 +1425,15 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('MP', 'Northern Mariana Islands
 ', 'GeoNames data', NULL),
    ('MQ', 'Martinique
-', 'GeoNames data', NULL),
+', 'GeoNames data', '972NN; the French format accepts any five digits'),
    ('MR', 'Mauritania
 ', 'no postal codes', NULL),
    ('MS', 'Montserrat
-', 'Wikipedia', NULL),
+', 'Wikipedia', 'MSR NNNN; the format accepts any three letters'),
    ('MT', 'Malta
 ', 'see note', 'the outcode alone (GeoNames has these), optionally with NNNN'),
    ('MU', 'Mauritius
-', 'Wikipedia', NULL),
+', 'Wikipedia', 'Wikipedia lists NNNNN and RNNNN (Rodrigues); the first character may be any letter or digit'),
    ('MV', 'Maldives
 ', 'Wikipedia', NULL),
    ('MW', 'Malawi
@@ -1446,7 +1447,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('NA', 'Namibia
 ', 'Wikipedia', NULL),
    ('NC', 'New Caledonia
-', 'GeoNames data', NULL),
+', 'GeoNames data', '988NN; the French format accepts any five digits'),
    ('NE', 'Niger
 ', 'Wikipedia', NULL),
    ('NF', 'Norfolk Island
@@ -1470,11 +1471,11 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('OM', 'Oman
 ', 'Wikipedia', NULL),
    ('PA', 'Panama
-', 'see note', 'Wikipedia says NNNN; GeoNames has five digits'),
+', 'see note', 'Wikipedia says 4 digits, GeoNames has 5; both accepted'),
    ('PE', 'Peru
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'five digits; Wikipedia also lists a CC NNNN form, not accepted'),
    ('PF', 'French Polynesia
-', 'GeoNames data', NULL),
+', 'GeoNames data', '987NN; the French format accepts any five digits'),
    ('PG', 'Papua New Guinea
 ', 'Wikipedia', NULL),
    ('PH', 'Philippines
@@ -1484,9 +1485,9 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('PL', 'Poland
 ', 'GeoNames data', NULL),
    ('PM', 'Saint Pierre and Miquelon
-', 'GeoNames data', NULL),
+', 'GeoNames data', '97500; the French format accepts any five digits'),
    ('PN', 'Pitcairn Islands
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'a single code (PCRN 1ZZ); the format accepts any code of that shape'),
    ('PR', 'Puerto Rico
 ', 'GeoNames data', NULL),
    ('PS', 'Palestine
@@ -1500,7 +1501,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('QA', 'Qatar
 ', 'no postal codes', NULL),
    ('RE', 'Réunion
-', 'GeoNames data', NULL),
+', 'GeoNames data', '974NN; the French format accepts any five digits'),
    ('RO', 'Romania
 ', 'GeoNames data', NULL),
    ('RS', 'Serbia
@@ -1520,9 +1521,9 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('SE', 'Sweden
 ', 'GeoNames data', NULL),
    ('SG', 'Singapore
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'six digits; Wikipedia also lists the old 2- and 4-digit forms, not accepted'),
    ('SH', 'Saint Helena, Ascension and Tristan da Cunha
-', 'Wikipedia', NULL),
+', 'Wikipedia', 'a single code (STHL 1ZZ); the format accepts any code of that shape'),
    ('SI', 'Slovenia
 ', 'GeoNames data', NULL),
    ('SJ', 'Svalbard and Jan Mayen
@@ -1532,7 +1533,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('SL', 'Sierra Leone
 ', 'no postal codes', NULL),
    ('SM', 'San Marino
-', 'GeoNames data', NULL),
+', 'GeoNames data', '4789N; the format accepts any five digits'),
    ('SN', 'Senegal
 ', 'Wikipedia', NULL),
    ('SO', 'Somalia
@@ -1552,7 +1553,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('SZ', 'Eswatini
 ', 'Wikipedia', NULL),
    ('TC', 'Turks and Caicos Islands
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'a single code (TKCA 1ZZ); the format accepts any code of that shape'),
    ('TD', 'Chad
 ', 'no postal codes', NULL),
    ('TF', 'French Southern and Antarctic Territories
@@ -1580,7 +1581,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('TV', 'Tuvalu
 ', 'no postal codes', NULL),
    ('TW', 'Taiwan
-', 'Wikipedia', NULL),
+', 'Wikipedia', 'NNN with an optional -NNN; the older 5-digit NNN-NN is not accepted'),
    ('TZ', 'Tanzania
 ', 'Wikipedia', NULL),
    ('UA', 'Ukraine
@@ -1596,7 +1597,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('UZ', 'Uzbekistan
 ', 'Wikipedia', NULL),
    ('VA', 'Vatican
-', 'GeoNames data', NULL),
+', 'GeoNames data', 'a single code (00120); the format accepts any five digits'),
    ('VC', 'Saint Vincent and the Grenadines
 ', 'Wikipedia', NULL),
    ('VE', 'Venezuela
@@ -1610,7 +1611,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('VU', 'Vanuatu
 ', 'no postal codes', NULL),
    ('WF', 'Wallis and Futuna
-', 'GeoNames data', NULL),
+', 'GeoNames data', '986NN; the French format accepts any five digits'),
    ('WS', 'Samoa
 ', 'see note', 'Wikipedia: CCNNNN; the one GeoNames row is American Samoa''s ZIP, filed under the wrong country'),
    ('XK', 'Kosovo
@@ -1618,7 +1619,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('YE', 'Yemen
 ', 'no postal codes', NULL),
    ('YT', 'Mayotte
-', 'GeoNames data', NULL),
+', 'GeoNames data', '976NN; the French format accepts any five digits'),
    ('ZA', 'South Africa
 ', 'GeoNames data', NULL),
    ('ZM', 'Zambia
