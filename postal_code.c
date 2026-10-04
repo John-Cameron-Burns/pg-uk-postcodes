@@ -125,15 +125,18 @@ static void lookup_country_raise (lc_result why, const char *cc, size_t len,
    case LC_BAD_SHAPE:
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       errmsg (_("\"%.*s\" is not a two-letter country code"), (int) len, cc)));
+      break;
    case LC_NO_ASSIGNMENT:
       ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       errmsg (_("\"%c%c\" is not a supported country code"), iso2[0], iso2[1]),
                       errhint(_("see postal_code_country_formats, or add one with add_country_format()"))));
+      break;
    case LC_FORMAT_MISSING:
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                       errmsg (_("country \"%c%c\" is assigned to format \"%s\", "
                                 "which this build of postal_code does not have"),
                               iso2[0], iso2[1], format_name)));
+      break;
    case LC_OK:
       break;
    }

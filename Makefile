@@ -9,7 +9,7 @@ DATA         = postcode--1.3.0.sql postcode--1.3.1.sql postcode--1.3.2.sql postc
                 postcode--1.3.0--1.3.1.sql postcode--1.3.1--1.3.2.sql postcode--1.3.2--1.3.3.sql postcode--1.3.3--1.3.4.sql postcode--1.3.4--1.3.5.sql postcode--1.3.5--2.0.0.sql
 REGRESS      = parser binary sort random quirks format match partial dps range cast support selectivity postal_code
 REGRESS_OPTS = --load-extension=$(EXTENSION)
-PG_CPPFLAGS  = -std=c99 -Wall -Wpedantic -DEXTVERSION=$(EXTVERSION) -DTRUE=true -DFALSE=false
+PG_CPPFLAGS  = -std=c99 -Wall -DEXTVERSION=$(EXTVERSION) -DTRUE=true -DFALSE=false
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

@@ -21,7 +21,6 @@ const char * postcode_version() { return STR(EXTVERSION); }
 
 postcode postcode_parse (const char *str, bool partial) {
    postcode res = 0;
-   if (! str) return 0;
 
    char buf[POSTCODE_PARSE_LIMIT+1];
    int i = 0;
@@ -175,7 +174,7 @@ bool postcode_binchk (postcode p) {
 
 
 dps postcode_dps_parse (const char *str) {
-   if (! (str && strnlen(str, 3) == 2)) return 0;
+   if (strnlen(str, 3) != 2) return 0;
    char key[3] = { 0 };
    memcpy(key, str, 2);
    if (key[1] >= 'a' && key[1] <= 'z') key[1] -= 32; // tr/[a-z]/[A-Z/
