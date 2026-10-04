@@ -137,6 +137,16 @@ typedef struct {
 // const struct's value isn't a constant expression C allows in a
 // static initializer. An unimplemented slot (PC_FMT_UNKNOWN, or any
 // future gap) is NULL; check before calling through it.
+// The compiled encoders, one per file; postal_code_fmt.c collects them into pc_formats.
+extern const pc_encoder pc_us_encoder;
+extern const pc_encoder pc_ca_encoder;
+extern const pc_encoder pc_fr_encoder;
+extern const pc_encoder pc_br_encoder;
+extern const pc_encoder pc_cz_encoder;
+extern const pc_encoder pc_lu_encoder;
+extern const pc_encoder pc_gb_encoder;
+extern const pc_encoder pc_ie_encoder;
+
 extern const pc_encoder * const pc_formats[PC_FMT_MAX];
 
 // Pure lookup by a format's registered name (pc_encoder.name, e.g.

@@ -2,14 +2,6 @@
 
 #include "postal_code_fmt.h"
 
-extern const pc_encoder pc_us_encoder;
-extern const pc_encoder pc_ca_encoder;
-extern const pc_encoder pc_fr_encoder;
-extern const pc_encoder pc_br_encoder;
-extern const pc_encoder pc_cz_encoder;
-extern const pc_encoder pc_lu_encoder;
-extern const pc_encoder pc_gb_encoder;
-extern const pc_encoder pc_ie_encoder;
 
 const pc_encoder * const pc_formats[PC_FMT_MAX] = {
    [PC_FMT_US] = &pc_us_encoder,
