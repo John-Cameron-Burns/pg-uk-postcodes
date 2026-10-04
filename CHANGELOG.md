@@ -1,0 +1,47 @@
+# Changes
+
+## 2.0.0
+
+**Upgrading from 1.3.x:** `ALTER EXTENSION postcode UPDATE;`. The `postcode` and `dps` types, their
+functions, operators and operator classes are unchanged, and stored values are untouched. 2.0.0 only adds.
+
+**New: `postal_code`**, a 64-bit type for the postal codes of any country (see `README.md`).
+
+* Written `CC-code` as the UPU recommends: `US-90210`, `GB-SW1A 1AA`, `FR-75008`. Values sort by country
+  in ISO 3166-1 order, then by their own code; a coarser value sorts just before the finer ones that
+  extend it (an outcode, a ZIP5 before its ZIP+4s).
+* Formats for 194 of the 250 ISO countries and territories; the other 56 have no postal codes
+  (`SELECT * FROM postal_code_world`). Eight formats are compiled (US, CA, FR, BR, CZ, LU, GB, IE); the
+  rest are *patterns* -- a template or a bounded regular expression that defines the whole set of a country's codes (a code is stored as its rank in that set, so order, validity and prefix ranges are exact) -- and a new country is added with SQL: `add_country_template('PL', 'NN-NNN')` or `add_country_template('NL', '/[1-9]\d{3}( [A-Z]{2})?/')`. Country rules narrower than a code's shape are built in (`NARROWING.md`); the UK format enforces Royal Mail's letter rules.
+* Prefix matching as a btree range scan: `postal_prefix()`, `to_postal_prefix()`, `lower_bound()`,
+  `upper_bound()`, the `postal_code_range` type, and the `%` / `!%` operators. `outcode()` / `district()`.
+* `is_valid()` and the NULL-returning `to_postal_code()` for loading dirty feeds. Input tolerates the
+  spellings real data uses (other scripts' digits, Unicode dashes and spaces, missing hyphens, the
+  country's own letters in front) and nothing else.
+* A column can be locked to a country: `pc postal_code('US')`.
+* Country assignments are data (`postal_code_country_formats`, `add_country_format()`,
+  `remove_country_format()`), with shipped and user assignments kept apart so that a dump carries yours.
+
+**Compatibility:** PostgreSQL 14 or later. The regression suite passes on 14, 15, 16, 17 and 18 (built from
+the release archive); `.github/workflows/test.yml` runs it on all five. One difference: from PostgreSQL 17
+the planner turns `pc <@ postal_prefix(...)` into an index scan; on 14 to 16 it is correct but a filter,
+and `pc % '...'` or `pc >= lower_bound(...) AND pc < upper_bound(...)` is the indexed form (see `README.md`).
+
+**Things to know**
+
+* Restoring a dump that contains `postal_code` values for countries *you* assigned needs the extension's
+  own configuration tables loaded first; `pg_restore` loads data in name order. A reordered restore list
+  is documented in the README. Values for the built-in countries restore with no special handling.
+* `postal_code_in` and the two-argument constructor are `STABLE`, not `IMMUTABLE`, because they depend on
+  the country table, so they cannot be used in an index expression. Indexing a `postal_code` column is
+  unaffected.
+* A pattern is permanent once a value has been written under it (each country has 51 versions); to change a
+  country's rules, assign it a new pattern. See `README.md`.
+* Where separators are dropped from UK outcode or sector text, `SW11` is read as the outcode `SW11`, not
+  `SW1 1`; a full postcode is unambiguous.
+* Validated on 117 million OpenStreetMap postcodes, 1.8 million GeoNames codes and 24,000 Companies House
+  addresses; `VALIDATION.md` has the method, results, and the known gaps.
+
+## 1.3.5 and earlier
+
+See the upstream project, and this fork's git history.

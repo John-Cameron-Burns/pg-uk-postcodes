@@ -56,5 +56,5 @@ INSERT INTO idx_survives (code) VALUES ('SW1A 1AA'), ('BA1 1AZ'), ('M1 1AE');
 CREATE INDEX idx_survives_split_part_idx ON idx_survives (split_part(code::text, ' ', 1));
 ALTER TABLE idx_survives ALTER COLUMN code TYPE text USING code::text;    -- widen
 ALTER TABLE idx_survives ALTER COLUMN code TYPE postcode USING code::postcode; -- narrow -- this used to fail
-SELECT indexdef FROM pg_indexes WHERE tablename = 'idx_survives';
+SELECT regexp_replace(indexdef, 'pg_temp_[0-9]+\.', 'pg_temp.') AS indexdef FROM pg_indexes WHERE tablename = 'idx_survives';
 SELECT code::text, split_part(code::text, ' ', 1) FROM idx_survives ORDER BY code;

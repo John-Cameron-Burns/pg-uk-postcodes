@@ -2,3 +2,8 @@
 *.so
 results/
 *.bc
+sql/binary.sql
+*.zip
+test_postal_code
+test_postal_code_range
+test_postal_code_pattern
