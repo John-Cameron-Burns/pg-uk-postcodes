@@ -272,7 +272,11 @@ Formats implemented so far:
     since real Luxembourg data is essentially always written this way.
   * **GB** -- the existing `postcode` type's 32-bit value, carried unchanged in
     the payload and parsed by the same code (`postcode_parse`), so the two types
-    cannot drift apart. The outcode (`SW1A`, `LS24`) is a complete value. Also
+    cannot drift apart on layout. On top of that, `postal_code` enforces Royal Mail's
+    letter rules, which `postcode` has never done: unit letters are never C I K M O V,
+    the letter after the digit of an A9A outcode is one of A-H J K P S-U W, and of an
+    AA9A outcode one of A B E H M N P R V-Y (so `NG12 4FO`, letter O for zero, is
+    rejected). `'NG12 4FO'::postcode` is still accepted, as it always was. The outcode (`SW1A`, `LS24`) is a complete value. Also
     assigned to GG, IM and JE, whose areas (GY, IM, JE) are already in the UK
     layout.
   * **IE** -- Eircode: a routing key (`A65`, or the one exception `D6W`) that is

@@ -26,13 +26,13 @@ the Ireland file, French codes in Luxembourg's, Dutch codes in Germany's); those
 | OpenStreetMap postcode areas (`postal_code=*`, the mapped areas) | **99.42%** of 1.18 million |
 | GeoNames | 1,826,904 codes in 121 countries: all load except 21 French non-codes and one American Samoa ZIP filed under Samoa |
 | Companies House non-UK registered offices | **94.2%** of 24,244 parse; the rest are PO boxes, placeholders and text around a code |
-| Round trip through text, 1,978,425 distinct parsed codes | 0 failures |
+| Round trip through text, 1,978,596 distinct parsed codes | 0 failures |
 | Round trip through `COPY ... (FORMAT binary)` | 0 lost, 0 invented |
 | Country of the value equals the country it was parsed for | 0 mismatches |
 | `outcode()` idempotent, and never after its value | 0 failures |
 | `is_valid()` agrees with `to_postal_code()` | 0 disagreements |
 | Type order equals text order, within each country | 0 out of order (one documented exception, below) |
-| Prefix ranges: 693,939 distinct prefixes of those codes, `postal_prefix` count against a plain text count | **0 mismatches**, 0 fragments refused |
+| Prefix ranges: 694,144 distinct prefixes of those codes, `postal_prefix` count against a plain text count | **0 mismatches**, 0 fragments refused |
 | `1.3.5 -> 2.0.0` upgrade of a database holding 829,216 UK postcodes | identical checksums before and after, same partial-match results, and the same 143 extension objects as a fresh 2.0.0 install |
 | `pg_dump` and `pg_restore` of that database (829,216 codes in each of the two types) | both tables reproduced exactly, by plain restore and by the reordered restore list |
 | Countries recorded as having no postal codes | checked against OpenStreetMap: their values are placeholders (`00000`), dialling codes (`+218`) and `BP` box numbers, with no consistent format |
@@ -54,6 +54,11 @@ the Ireland file, French codes in Luxembourg's, Dutch codes in Germany's); those
 * **Fragments** may stop part-way through a UK unit (`M14 6Q`), or right after a ZIP+4 or CEP hyphen
   (a text prefix, so it excludes the bare code), and `L-` is every Luxembourg code.
 * **Colombia, Mozambique and Iran** take their optional extension block; Panama takes 4 and 5 digits.
+* **The UK format now enforces Royal Mail's letter rules** (unit letters never C I K M O V; the letter
+  after the digit of an A9A or AA9A outcode from a fixed set), which the `postcode` type has never done.
+  In 7.7 million real UK codes only 24 broke them -- typos such as `NG12 4FO`, letter O for zero -- and
+  none broke the outcode rules, so they cost almost nothing and catch real mistakes. Canada's format
+  already enforced its equivalents.
 * **Spacing and country-letter variants** (`MH96960`, `1050 010`, `06 830`, `L - 2226`) are recognised,
   without changing anything that already parsed.
 
