@@ -15,11 +15,10 @@
 // touches Postgres/SPI, so that everything else stays usable from a
 // plain standalone build (test_postal_code.c).
 //
-// *slot is set to the postal_code_templates slot when the assigned format
-// is a template ("template:NNN NN"), else -1. A name that says template but
-// has no slot row yields a non-NULL name and slot -1.
+// *version is set to the country's current language (the highest version in
+// postal_code_languages) when the assigned format is "pattern", else -1.
 __attribute__((warn_unused_result))
-char *pc_lookup_country_format (const char iso2[2], int *slot);
+char *pc_lookup_country_format (const char iso2[2], int *version);
 
 // The schema the extension is installed in, quoted for use in SQL text. The
 // SPI lookups name their tables with it rather than trusting search_path,

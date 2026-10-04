@@ -32,7 +32,7 @@
 #include <mb/pg_wchar.h>
 
 #include "postal_code_country.h"
-#include "postal_code_tpl.h"
+#include "postal_code_lang.h"
 
 #ifndef EXTVERSION
 #error  EXTVERSION is not defined
@@ -78,7 +78,8 @@ Datum postal_code_typmod_in (PG_FUNCTION_ARGS);
 Datum postal_code_typmod_out (PG_FUNCTION_ARGS);
 Datum postal_code_enforce (PG_FUNCTION_ARGS);
 Datum postal_code_formats_changed (PG_FUNCTION_ARGS);
-Datum postal_code_template_check (PG_FUNCTION_ARGS);
+Datum postal_code_pattern_check (PG_FUNCTION_ARGS);
+Datum postal_code_pattern_size (PG_FUNCTION_ARGS);
 Datum postal_code_lenient_text (PG_FUNCTION_ARGS);
 Datum postal_code_country  (PG_FUNCTION_ARGS);
 
@@ -106,11 +107,14 @@ static pc_format lookup_country_try (const char *cc, size_t len, char out_iso2[2
    out_iso2[0] = c0;
    out_iso2[1] = c1;
 
-   int slot;
-   *format_name = pc_lookup_country_format(out_iso2, &slot);
+   int version;
+   *format_name = pc_lookup_country_format(out_iso2, &version);
    if (!*format_name) { *why = LC_NO_ASSIGNMENT; return PC_FMT_UNKNOWN; }
 
-   pc_format fmt = slot >= 0 ? (pc_format) slot : pc_format_by_name(*format_name);
+   // "pattern" is the country's own current language; its tag is its version above the compiled formats
+   pc_format fmt = strcmp(*format_name, "pattern") == 0
+                 ? (version >= 1 ? (pc_format) (PC_FMT_LANG_BASE + version) : PC_FMT_UNKNOWN)
+                 : pc_format_by_name(*format_name);
    if (fmt == PC_FMT_UNKNOWN) *why = LC_FORMAT_MISSING;
    return fmt;
 }
@@ -136,35 +140,43 @@ static void lookup_country_raise (lc_result why, const char *cc, size_t len,
 }
 
 // ---- format dispatch ----------------------------------------------------------
-// A format tag is either a compiled encoder (postal_code_fmt.c) or a slot in
-// the postal_code_templates table (postal_code_template.h). Everything below
-// goes through these so it need not care which. A tag that is neither (a
-// slot the table has no row for, or garbage in a binary value) does not
-// resolve.
+// A format tag is either a compiled encoder (postal_code_fmt.c) or one of the country's own languages,
+// a ranked pattern (postal_code_pattern.h) kept in the postal_code_languages table; the value's own
+// country says whose. Everything below goes through these so it need not care which. A tag that is
+// neither (a language the country does not have, or garbage in a binary value) does not resolve.
 typedef struct {
-   const pc_encoder *enc;   // NULL for a template
-   pc_template       tpl;
+   const pc_encoder *enc;   // NULL for a pattern
+   const pc_pattern *pat;
+   char              iso2[2];
+   int               version;
 } fmt_impl;
 
-static bool fmt_resolve (pc_format fmt, fmt_impl *f) {
+static bool fmt_resolve (pc_format fmt, const char iso2[2], fmt_impl *f) {
    f->enc = NULL;
+   f->pat = NULL;
+   f->iso2[0] = iso2[0];
+   f->iso2[1] = iso2[1];
+   f->version = 0;
    if (fmt > PC_FMT_UNKNOWN && fmt < PC_FMT_MAX && pc_formats[fmt]) { f->enc = pc_formats[fmt]; return true; }
-   return pc_template_for_slot((int) fmt, &f->tpl);
+   if (fmt < PC_FMT_LANG_FIRST || fmt > PC_FMT_LANG_LAST) return false;
+   f->version = (int) fmt - PC_FMT_LANG_BASE;
+   f->pat = pc_language_for(iso2, f->version);
+   return f->pat != NULL;
 }
 
 // A format that has to resolve because a country was just assigned to it:
 // failing is a configuration fault.
-static void fmt_resolve_or_raise (pc_format fmt, fmt_impl *f) {
-   if (!fmt_resolve(fmt, f))
+static void fmt_resolve_or_raise (pc_format fmt, const char iso2[2], fmt_impl *f) {
+   if (!fmt_resolve(fmt, iso2, f))
       ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
-                      errmsg (_("postal code format %d is not defined"), (int) fmt),
-                      errhint(_("a template slot needs a row in postal_code_templates"))));
+                      errmsg (_("postal code format %d of country \"%c%c\" is not defined"), (int) fmt, iso2[0], iso2[1]),
+                      errhint(_("a language needs a row in postal_code_languages"))));
 }
 
 static const char *fmt_describe (const fmt_impl *f) {
-   return f->enc ? f->enc->name : psprintf("template \"%s\"", f->tpl.spec);
+   return f->enc ? f->enc->name : psprintf("%c%c", f->iso2[0], f->iso2[1]);
 }
-static size_t fmt_max_text_len (const fmt_impl *f) { return f->enc ? f->enc->max_text_len : (size_t) f->tpl.nitems; }
+static size_t fmt_max_text_len (const fmt_impl *f) { return f->enc ? f->enc->max_text_len : (size_t) f->pat->maxlen; }
 
 static inline bool ascii_alpha (char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 static inline char ascii_upper (char c) { return (c >= 'a' && c <= 'z') ? (char) (c - 32) : c; }
@@ -218,41 +230,38 @@ static int variant_forms (const char *text, const char iso2[2], const char *form
    return n;
 }
 
-// Text may carry the country's own letters in front ("VG1110") when the
-// template says that is how the country writes its codes (a leading CC);
-// they are checked here and dropped, since the country is already known.
-static bool fmt_parse_one (const fmt_impl *f, const char iso2[2], const char *text, uint64_t *payload) {
+static bool fmt_parse_one (const fmt_impl *f, const char *text, uint64_t *payload) {
    if (f->enc) return f->enc->parse(text, false, payload) && f->enc->valid(*payload);
-   return pc_template_parse(&f->tpl, pc_template_skip_cc(&f->tpl, iso2, text), payload);
+   return pc_pattern_parse(f->pat, text, payload);
 }
 static bool fmt_parse_valid (const fmt_impl *f, const char iso2[2], const char *text, uint64_t *payload) {
    const char *forms[MAX_FORMS];
    int n = variant_forms(text, iso2, forms);
    for (int i = 0; i < n; i++)
-      if (fmt_parse_one(f, iso2, forms[i], payload)) return true;
+      if (fmt_parse_one(f, forms[i], payload)) return true;
    return false;
 }
 static int fmt_render (const fmt_impl *f, uint64_t payload, char *buf) {
-   return f->enc ? f->enc->render(payload, buf) : pc_template_render(&f->tpl, payload, buf);
+   return f->enc ? f->enc->render(payload, buf) : pc_pattern_render(f->pat, payload, buf);
 }
 static bool fmt_valid (const fmt_impl *f, uint64_t payload) {
-   return f->enc ? f->enc->valid(payload) : pc_template_valid(&f->tpl, payload);
+   return f->enc ? f->enc->valid(payload) : pc_pattern_valid(f->pat, payload);
 }
 static bool fmt_has_range (const fmt_impl *f) { return f->enc ? f->enc->range != NULL : true; }
-static bool fmt_range_one (const fmt_impl *f, const char iso2[2], const char *frag, uint64_t *lo, uint64_t *hi, bool *unbounded) {
+static bool fmt_range_one (const fmt_impl *f, const char *frag, uint64_t *lo, uint64_t *hi, bool *unbounded) {
    return f->enc ? f->enc->range(frag, lo, hi, unbounded)
-                 : pc_template_range(&f->tpl, pc_template_skip_cc(&f->tpl, iso2, frag), lo, hi, unbounded);
+                 : pc_pattern_range(f->pat, frag, lo, hi, unbounded);
 }
 static bool fmt_range (const fmt_impl *f, const char iso2[2], const char *frag, uint64_t *lo, uint64_t *hi, bool *unbounded) {
    const char *forms[MAX_FORMS];
    int n = variant_forms(frag, iso2, forms);
    for (int i = 0; i < n; i++)
-      if (fmt_range_one(f, iso2, forms[i], lo, hi, unbounded)) return true;
+      if (fmt_range_one(f, forms[i], lo, hi, unbounded)) return true;
    return false;
 }
-static bool fmt_has_outcode (const fmt_impl *f) { return f->enc ? f->enc->outcode != NULL : f->tpl.has_tail; }
+static bool fmt_has_outcode (const fmt_impl *f) { return f->enc ? f->enc->outcode != NULL : f->pat->has_outcode; }
 static uint64_t fmt_outcode (const fmt_impl *f, uint64_t payload) {
-   return f->enc ? f->enc->outcode(payload) : pc_template_outcode(&f->tpl, payload);
+   return f->enc ? f->enc->outcode(payload) : pc_pattern_outcode(f->pat, payload);
 }
 
 // Shared by postal_code_in() and postal_code_from_parts(): always either
@@ -420,7 +429,7 @@ Datum postal_code_in (PG_FUNCTION_ARGS) {
    char iso2[2];
    pc_format fmt = lookup_country(country, 2, iso2);
    fmt_impl f;
-   fmt_resolve_or_raise(fmt, &f);
+   fmt_resolve_or_raise(fmt, iso2, &f);
 
    uint64_t payload;
    if (! fmt_parse_valid(&f, iso2, national, &payload))
@@ -447,13 +456,13 @@ Datum postal_code_out (PG_FUNCTION_ARGS) {
       PG_RETURN_CSTRING(end);
    }
 
-   fmt_impl f;
-   if (!fmt_resolve(fmt, &f))
-      ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
-                      errmsg (_("cannot render corrupted binary data to text"))));
-
    char iso2[2];
    pc_unpack_country((uint16_t) GET_COUNTRY(pc), iso2);
+
+   fmt_impl f;
+   if (!fmt_resolve(fmt, iso2, &f))
+      ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+                      errmsg (_("cannot render corrupted binary data to text"))));
 
    char *out = palloc(3 + fmt_max_text_len(&f) + 1); // "CC-" + code + NUL
    int n = sprintf(out, "%c%c-", iso2[0], iso2[1]);
@@ -472,9 +481,11 @@ Datum postal_code_recv (PG_FUNCTION_ARGS) {
    uint16_t country = (uint16_t) GET_COUNTRY(pc);
    bool end_bound = fmt == PC_FMT_END && GET_PAYLOAD(pc) == 0 &&
                     (country >> PC_LETTER_BITS) < 26 && (country & ((1 << PC_LETTER_BITS) - 1)) < 26;
+   char iso2[2];
+   pc_unpack_country(country, iso2);
    fmt_impl f;
    if (!end_bound &&
-       (!fmt_resolve(fmt, &f) || ! fmt_valid(&f, GET_PAYLOAD(pc))))
+       (!fmt_resolve(fmt, iso2, &f) || ! fmt_valid(&f, GET_PAYLOAD(pc))))
       ereport(ERROR, (errcode(ERRCODE_INVALID_BINARY_REPRESENTATION),
                       errmsg (_("received binary data is invalid for type postal_code")),
                       errhint(_("server binary format version is %s"), STR(EXTVERSION))));
@@ -613,7 +624,7 @@ Datum postal_code_from_parts (PG_FUNCTION_ARGS) {
    pc_format fmt = lookup_country(country, 2, iso2);
 
    fmt_impl f;
-   fmt_resolve_or_raise(fmt, &f);
+   fmt_resolve_or_raise(fmt, iso2, &f);
 
    uint64_t payload;
    if (! fmt_parse_valid(&f, iso2, national, &payload))
@@ -648,7 +659,7 @@ static bool lenient_build (const char *postcode, const char *cc, postal_code *ou
    if (why != LC_OK) lookup_country_raise(why, country, 2, iso2, format_name);
 
    fmt_impl f;
-   fmt_resolve_or_raise(fmt, &f);
+   fmt_resolve_or_raise(fmt, iso2, &f);
 
    uint64_t payload;
    if (! fmt_parse_valid(&f, iso2, national, &payload)) return false;
@@ -696,7 +707,7 @@ static pc_format fragment_range (const char *str, char iso2[2], uint64_t *lo, ui
    pc_format fmt = lookup_country(str, 2, iso2);
 
    fmt_impl f;
-   fmt_resolve_or_raise(fmt, &f);
+   fmt_resolve_or_raise(fmt, iso2, &f);
 
    if (!fmt_has_range(&f))
       ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -819,7 +830,7 @@ static bool fragment_range_try (const char *str, char iso2[2], pc_format *fmt,
    *fmt = lookup_country_try(str, 2, iso2, &why, &format_name);
    if (why != LC_OK) return false;
    fmt_impl f;
-   fmt_resolve_or_raise(*fmt, &f);
+   fmt_resolve_or_raise(*fmt, iso2, &f);
    if (!fmt_has_range(&f)) return false;
 
    uint64_t lo, hi = 0;
@@ -960,7 +971,7 @@ Datum postal_code_partial_support (PG_FUNCTION_ARGS) {
    PG_RETURN_POINTER(make_andclause(list_make2(ge, lt)));
 }
 
-// Statement-level trigger on postal_code_user_countries (and the templates table): DML does not
+// Statement-level trigger on postal_code_user_countries (and the languages table): DML does not
 // normally invalidate cached plans that depend on a table (only schema
 // changes do), so say so explicitly. This is what makes the plan-time
 // folding in postal_code_prefix_support() safe.
@@ -975,22 +986,39 @@ Datum postal_code_formats_changed (PG_FUNCTION_ARGS) {
 }
 
 
-// Validates a template (postal_code_template.h) and returns it in canonical
-// form, or raises saying what is wrong with it. add_country_template() runs
-// every template through this before it gets a slot.
-PG_FUNCTION_INFO_V1(postal_code_template_check);
-
-Datum postal_code_template_check (PG_FUNCTION_ARGS) {
-   char *spec = text_to_cstring(PG_GETARG_TEXT_PP(0));
-   pc_template t;
-   char err[160];
-
-   if (!pc_template_compile(spec, &t, err, sizeof err))
+// Validates a pattern spec (a template or /regex/, postal_code_pattern.h) by compiling it, and returns
+// the regular expression it means -- which is what is stored. add_country_template() runs every spec
+// through this before it becomes a language.
+static pc_pattern *compile_spec (const char *spec, char *regex, size_t regexlen) {
+   char err[200];
+   if (!pc_pattern_resolve(spec, regex, regexlen, err, sizeof err))
       ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                      errmsg (_("invalid postal code template \"%s\": %s"), spec, err),
-                      errhint(_("N is a digit, A a letter, X either; ' ' and '-' are separators; one optional [ ] group may end it, e.g. \"NNNNN[-NNNN]\""))));
+                      errmsg (_("invalid postal code pattern \"%s\": %s"), spec, err),
+                      errhint(_("a template (N digit, A letter, X either, [ ] optional: \"NNNNN[-NNNN]\") or a regular expression between slashes (\"/\\d{5}(-\\d{4})?/\")"))));
+   pc_pattern *p = pc_pattern_compile(regex, palloc, err, sizeof err);
+   if (!p)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                      errmsg (_("invalid postal code pattern \"%s\": %s"), spec, err)));
+   return p;
+}
 
-   PG_RETURN_TEXT_P(cstring_to_text(t.spec));
+PG_FUNCTION_INFO_V1(postal_code_pattern_check);
+
+Datum postal_code_pattern_check (PG_FUNCTION_ARGS) {
+   char *spec = text_to_cstring(PG_GETARG_TEXT_PP(0));
+   char regex[4096];
+   compile_spec(spec, regex, sizeof regex);
+   PG_RETURN_TEXT_P(cstring_to_text(regex));
+}
+
+// How many codes a pattern denotes.
+PG_FUNCTION_INFO_V1(postal_code_pattern_size);
+
+Datum postal_code_pattern_size (PG_FUNCTION_ARGS) {
+   char *spec = text_to_cstring(PG_GETARG_TEXT_PP(0));
+   char regex[4096];
+   pc_pattern *p = compile_spec(spec, regex, sizeof regex);
+   PG_RETURN_INT64((int64) p->total);
 }
 
 
@@ -1006,8 +1034,11 @@ Datum postal_code_outcode (PG_FUNCTION_ARGS) {
    postal_code pc = PG_GETARG_POSTAL_CODE(0);
    pc_format fmt = (pc_format) GET_FORMAT(pc);
 
+   char iso2[2];
+   pc_unpack_country((uint16_t) GET_COUNTRY(pc), iso2);
+
    fmt_impl f;
-   if (!fmt_resolve(fmt, &f) || !fmt_has_outcode(&f))
+   if (!fmt_resolve(fmt, iso2, &f) || !fmt_has_outcode(&f))
       PG_RETURN_NULL();
 
    SET_PAYLOAD(pc, fmt_outcode(&f, GET_PAYLOAD(pc)));

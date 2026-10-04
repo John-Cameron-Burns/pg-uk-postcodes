@@ -250,7 +250,7 @@ WHERE is_valid(code, cc) IS DISTINCT FROM (to_postal_code(code, cc) IS NOT NULL)
 -- genuinely new format shape needs real C. See postal_code_country.c
 -- for how postal_code_in()/postal_code(text,text) look this up.
 
-SELECT name FROM postal_code_formats WHERE name NOT LIKE 'template:%' ORDER BY name;
+SELECT name FROM postal_code_formats ORDER BY name;
 SELECT iso2, format_name FROM postal_code_country_formats
 WHERE iso2 IN ('BR', 'CA', 'CZ', 'FR', 'LU', 'US', 'GB', 'GG', 'IM', 'JE', 'IE') ORDER BY iso2;
 
@@ -534,12 +534,13 @@ CREATE TEMP TABLE nowhere (pc postal_code('ZZ'));
 INSERT INTO nowhere VALUES ('ZZ-12345');
 SELECT is_valid('12345', 'ZZ') AS can_anything_be_valid_there;
 
--- ===== Templated formats =====================================================
--- A country made of fixed-width digit/letter groups needs only an SQL row.
+-- ===== Patterns ==============================================================
+-- A country whose codes can be described needs only an SQL row: a template (N digit, A letter, X either,
+-- [ ] optional) or a regular expression, which defines the whole set of its codes.
 --
--- First, a template that was rolled back must not be remembered. The first free slot is
+-- First, a pattern that was rolled back must not be remembered. Version 1 of XA is
 -- NAN in the first transaction and ANA in the second, and the backend caches
--- what a slot means; the second must not see the first.
+-- what a version means; the second must not see the first.
 BEGIN;
 SELECT add_country_template('XA', 'NAN');
 SELECT 'XA-1A2'::postal_code;
@@ -552,31 +553,32 @@ SELECT 'XA-1A2'::postal_code;
 ROLLBACK TO s;
 ROLLBACK;
 SELECT 'XA-A1A'::postal_code;
-SELECT count(*) AS user_templates_after_rollbacks FROM postal_code_templates WHERE NOT builtin;
+SELECT count(*) AS user_languages_after_rollbacks FROM postal_code_languages WHERE NOT builtin;
 
--- templates that are not templates
-SELECT postal_code_template_check('NNNNN[-NNNN]') AS ok, postal_code_template_check('X') AS also_ok;
-SELECT postal_code_template_check('');
-SELECT postal_code_template_check('nn');
-SELECT postal_code_template_check('NN-');
-SELECT postal_code_template_check('NN[N');
-SELECT postal_code_template_check('NN[N][N]');
-SELECT postal_code_template_check('XXXXXXXXXX');
+-- patterns that are not patterns
+SELECT postal_code_pattern_check('NNNNN[-NNNN]') AS ok, postal_code_pattern_check('X') AS also_ok;
+SELECT postal_code_pattern_check('');
+SELECT postal_code_pattern_check('nn');
+SELECT postal_code_pattern_check('NN-');
+SELECT postal_code_pattern_check('NN[N');
+SELECT postal_code_pattern_check('NN[N][N]');
+SELECT postal_code_pattern_check('XXXXXXXXXX');
 \set VERBOSITY terse
 SELECT add_country_template('XA', 'NN?');
 SELECT add_country_template('PLX', 'NN');
 \set VERBOSITY default
 
 -- Assigning countries. These persist until the end of the section (the
--- templates themselves are permanent), so the checks below can fail freely.
+-- languages themselves are permanent), so the checks below can fail freely.
 SELECT add_country_template('XA', 'NN-NNN');
 SELECT add_country_template('XB', 'NNNN AA');
 SELECT add_country_template('XC', 'NNN NN');
 SELECT add_country_template('XD', 'NNNNN[-NNNN]');
 SELECT add_country_template('XE', 'NNNN');
-SELECT add_country_template('XF', 'NNNN');      -- the same shape shares a slot
-SELECT add_country_template('pl', 'NN-NNN');    -- cc is normalised; same template, same slot
-SELECT template FROM postal_code_templates WHERE NOT builtin ORDER BY slot;
+SELECT add_country_template('XF', 'NNNN');      -- each country has its own language
+SELECT add_country_template('pl', 'NN-NNN');    -- cc is normalised
+SELECT add_country_template('XA', 'NN-NNN');    -- the same again adds nothing
+SELECT iso2, version, source, pattern FROM postal_code_languages WHERE NOT builtin ORDER BY iso2, version;
 SELECT iso2, format_name FROM postal_code_country_formats WHERE iso2 BETWEEN 'XA' AND 'XF' ORDER BY iso2;
 
 -- in, out, either case, separators optional
@@ -651,7 +653,7 @@ COPY pl FROM stdin;
 INSERT INTO pl VALUES ('XB-1012 JL');
 SELECT pc FROM pl ORDER BY pc;
 
--- a country moves to a different template: new values follow the new one, values
+-- a country moves to a different pattern: new values follow the new one, values
 -- already stored go on reading as they were written
 CREATE TEMP TABLE pl_old AS SELECT 'XA-00-950'::postal_code AS pc;
 SELECT add_country_template('XA', 'NNNNN');
@@ -659,43 +661,78 @@ SELECT 'XA-00950'::postal_code AS new_style;
 SELECT 'XA-00-950'::postal_code;
 SELECT pc AS still_reads_as_written, outcode(pc) IS NULL AS no_outcode FROM pl_old;
 SELECT pc = 'XA-00950'::postal_code AS different_format_different_value FROM pl_old;
-SELECT template FROM postal_code_templates WHERE NOT builtin ORDER BY slot;
+SELECT iso2, version, source FROM postal_code_languages WHERE NOT builtin AND iso2 = 'XA' ORDER BY version;
 
--- a template is permanent once written: values are read back through it
+-- a language is permanent once written: values are read back through it
 \set VERBOSITY terse
-UPDATE postal_code_templates SET template = 'NNNNN' WHERE slot = 12;
-DELETE FROM postal_code_templates WHERE slot = 12;
-TRUNCATE postal_code_templates;
+UPDATE postal_code_languages SET source = 'NNNNN' WHERE iso2 = 'XA' AND version = 1;
+DELETE FROM postal_code_languages WHERE iso2 = 'XA' AND version = 1;
+TRUNCATE postal_code_languages;
 \set VERBOSITY default
-SELECT template FROM postal_code_templates WHERE NOT builtin ORDER BY slot;
+SELECT count(*) AS languages_kept FROM postal_code_languages WHERE NOT builtin AND iso2 = 'XA';
 
 SELECT remove_country_format(cc) FROM unnest(ARRAY['XA', 'XB', 'XC', 'XD', 'XE', 'XF']) cc;
 
--- and when all 51 slots are taken
+-- a country can have 51 languages (versions), however many other countries have; XA already has two
 BEGIN;
 SELECT count(add_country_template('XA', t)) AS filled FROM (
    SELECT t FROM (
-      SELECT repeat('N', a) || repeat('A', b) AS t FROM generate_series(1, 6) a, generate_series(1, 4) b
+      SELECT repeat('N', a) || repeat('A', b) AS t FROM generate_series(1, 7) a, generate_series(1, 5) b
       UNION ALL SELECT repeat('X', c) FROM generate_series(1, 9) c
       UNION ALL SELECT repeat('N', c) FROM generate_series(1, 9) c
       UNION ALL SELECT repeat('A', c) FROM generate_series(1, 6) c
    ) q
-   WHERE t NOT IN (SELECT template FROM postal_code_templates)
+   WHERE t NOT IN (SELECT source FROM postal_code_languages WHERE iso2 = 'XA')
    ORDER BY t
-   LIMIT 51 - (SELECT count(*) FROM postal_code_templates)
+   LIMIT 51 - (SELECT count(*) FROM postal_code_languages WHERE iso2 = 'XA')
 ) f;
-SELECT count(*) AS slots, min(slot), max(slot) FROM postal_code_templates;
+SELECT count(*) AS versions, min(version), max(version) FROM postal_code_languages WHERE iso2 = 'XA';
+SAVEPOINT all_taken;
 SELECT add_country_template('XA', 'NNNNNNNNNNN');
+ROLLBACK TO all_taken;
+SELECT add_country_template('XB', 'NNNNNNNNNNN') IS NOT NULL AS another_country_is_unaffected;
 ROLLBACK;
 
+-- ===== Regular expressions =====================================================
+-- A regular expression says what a template cannot: which letters may appear where, several lengths,
+-- a fixed prefix, that 0000 is not a code. It is bounded (no * or +), upper case, written between slashes.
+SELECT postal_code_pattern_check('/[1-9]\d{3}( [A-Z]{2})?/') AS ok, postal_code_pattern_size('/[1-9]\d{3}( [A-Z]{2})?/') AS codes;
+SELECT postal_code_pattern_size('NNNNN[-NNNN]') AS zip_plus_4, postal_code_pattern_size('NN-NNN') AS pl, postal_code_pattern_size('/[A-CE]\d[AC-FHKNPRTV-Y]/') AS some;
+\set VERBOSITY terse
+SELECT postal_code_pattern_check('/\d+/');
+SELECT postal_code_pattern_check('/\d*/');
+SELECT postal_code_pattern_check('/./');
+SELECT postal_code_pattern_check('/(?=\d)\d/');
+SELECT postal_code_pattern_check('/[a-z]/');
+SELECT postal_code_pattern_check('/\d{3}');
+SELECT postal_code_pattern_check('/(\d/');
+SELECT postal_code_pattern_check('/\d{3,2}/');
+SELECT postal_code_pattern_check('/[A-Z]{20}[A-Z]{21}/');
+SELECT postal_code_pattern_check('/[A-Z]{12}/');
+\set VERBOSITY default
+
+-- an invented country: four digits, not starting 0, and optionally two letters from a restricted set
+SELECT add_country_template('XK', '/[1-9]\d{3}( [ABD-HJLNP-UW-Z]{2})?/');
+SELECT 'XK-1234'::postal_code AS a, 'xk-1234 ab'::postal_code AS b, 'XK-1234AB'::postal_code AS c;
+SELECT 'XK-0123'::postal_code;
+SELECT 'XK-1234 CC'::postal_code;
+SELECT 'XK-1234 A'::postal_code;
+SELECT to_postal_code('XK-1234 IO') AS null_not_error, is_valid('1234 AB', 'XK') AS yes, is_valid('1234 AI', 'XK') AS no;
+SELECT pc, outcode(pc) FROM (VALUES ('XK-9999 ZZ'), ('XK-1000'), ('XK-1000 AA'), ('XK-5555'), ('XK-1000 ZZ')) v(t), LATERAL (SELECT t::postal_code AS pc) x ORDER BY pc;
+-- every range bound is a real code: no wasted bits
+SELECT lower_bound('XK-1') AS lo, upper_bound('XK-1') AS hi;
+SELECT lower_bound('XK-9999') AS lo, upper_bound('XK-9999') AS hi_is_the_end_of_the_country;
+SELECT lower_bound('XK-1234 A') AS lo, upper_bound('XK-1234 A') AS hi;
+SELECT 'XK-1234 AB'::postal_code % 'XK-12' AS yes, 'XK-1234'::postal_code % 'XK-1234 A' AS no;
+SELECT remove_country_format('XK');
+
 -- ===== Countries whose own letters are part of the code ====================
--- The British Virgin Islands write VG1110, Andorra AD500, Azerbaijan AZ 1000:
--- the ISO letters are in the code. A template starting CC means that: the
--- letters are optional on input, must be the country's own, and are neither
--- stored nor written back, so all the spellings are one value in the UPU form.
-SELECT add_country_template('XG', 'CCNNNN');
-SELECT add_country_template('XH', 'CC NNNN');
-SELECT add_country_template('XJ', 'CCN-NNNN');
+-- The British Virgin Islands write VG1110, Andorra AD500, Azerbaijan AZ 1000: the ISO letters are
+-- written in front. Their patterns leave the letters out; on input they are accepted (they must be the
+-- country's own) and are neither stored nor written back, so all the spellings are one value in the UPU form.
+SELECT add_country_template('XG', 'NNNN');
+SELECT add_country_template('XH', 'NNNN');
+SELECT add_country_template('XJ', 'N-NNNN');
 SELECT postal_code('XG1110', 'XG') AS a, postal_code('xg-1110', 'XG') AS b, postal_code('1110', 'XG') AS c,
        'XG-XG1110'::postal_code AS d, 'XG-XG-1110'::postal_code AS e, 'XG-1110'::postal_code AS f;
 SELECT postal_code('XG1110', 'XG') = postal_code('1110', 'XG') AS same_value, 'XG-XG1110'::postal_code::text AS written_back;
@@ -848,7 +885,8 @@ WHERE pc <@ postal_prefix('GB-M14 6Q');
 
 -- ===== A leading letter: Argentina ============================================
 -- NNNN, the province letter + 4 digits, and the full 8-character CPA are all written.
--- "[A]NNNN[AAA]": the leading letter is optional, so codes without it sort first.
+-- /([A-HJ-NP-Z]\d{4}([A-Z]{3})?|\d{4})/ (the province letters exclude I and O): the leading letter is optional, so codes
+-- without it sort first, and the three trailing letters only go with a province letter -- "1832GMR" is no code.
 SELECT written, to_postal_code(written, 'AR') AS parsed
 FROM (VALUES ('1832'), ('B1832'), ('B1832GMR'), ('b1832gmr'), ('B 1832'), ('B-1832'), ('1832GMR'), ('BB1832'), ('B183'), ('B1832GM'), ('')) v(written);
 SELECT pc FROM (VALUES ('AR-B1832GMR'), ('AR-1832'), ('AR-C1425'), ('AR-B1832'), ('AR-9000'), ('AR-A4190'), ('AR-B1832AAA'), ('AR-1000')) v(t), LATERAL (SELECT t::postal_code AS pc) x ORDER BY pc;

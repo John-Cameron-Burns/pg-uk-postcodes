@@ -32,8 +32,8 @@ const char *pc_schema_prefix (void) {
    return psprintf("%s.", quote_identifier(get_namespace_name(pc_extension_schema_oid())));
 }
 
-char *pc_lookup_country_format (const char iso2[2], int *slot) {
-   *slot = -1;
+char *pc_lookup_country_format (const char iso2[2], int *version) {
+   *version = -1;
    MemoryContext caller_context = CurrentMemoryContext;
    char cc[3] = { iso2[0], iso2[1], '\0' };
    char *result = NULL;
@@ -45,9 +45,8 @@ char *pc_lookup_country_format (const char iso2[2], int *slot) {
       Oid argtypes[1] = { TEXTOID };
       const char *schema = pc_schema_prefix();
       SPIPlanPtr plan = SPI_prepare(
-         psprintf("SELECT cf.format_name, t.slot FROM %spostal_code_country_formats cf "
-                  "LEFT JOIN %spostal_code_templates t ON cf.format_name = 'template:' || t.template "
-                  "WHERE cf.iso2 = $1", schema, schema),
+         psprintf("SELECT cf.format_name, (SELECT max(l.version) FROM %spostal_code_languages l WHERE l.iso2 = cf.iso2) "
+                  "FROM %spostal_code_country_formats cf WHERE cf.iso2 = $1", schema, schema),
          1, argtypes);
       if (!plan)
          ereport(ERROR, (errmsg("postal_code: failed to prepare country-format lookup (SPI error %d)",
@@ -71,9 +70,9 @@ char *pc_lookup_country_format (const char iso2[2], int *slot) {
          char *spi_str = TextDatumGetCString(d);
          result = MemoryContextStrdup(caller_context, spi_str);
 
-         bool slot_null;
-         Datum sd = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &slot_null);
-         if (!slot_null) *slot = (int) DatumGetInt16(sd);
+         bool version_null;
+         Datum vd = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &version_null);
+         if (!version_null) *version = (int) DatumGetInt16(vd);
       }
    }
 

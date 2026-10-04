@@ -38,4 +38,4 @@ jobs:
           enc="postal_code_fmt.c postal_code_us.c postal_code_ca.c postal_code_fr.c postal_code_br.c postal_code_cz.c postal_code_lu.c postal_code_gb.c postal_code_ie.c binfmt.c"
           cc -std=c99 -DEXTVERSION=test -o test_postal_code test_postal_code.c $enc && ./test_postal_code
           cc -std=c99 -DEXTVERSION=test -o test_postal_code_range test_postal_code_range.c $enc && ./test_postal_code_range
-          cc -std=c99 -DEXTVERSION=test -o test_postal_code_template test_postal_code_template.c postal_code_template.c $enc && ./test_postal_code_template
+          cc -std=c99 -Wall -Wpedantic -D_POSIX_C_SOURCE=200809L -o test_postal_code_pattern test_postal_code_pattern.c postal_code_pattern.c && ./test_postal_code_pattern
