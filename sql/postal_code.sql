@@ -835,7 +835,8 @@ SELECT lower_bound('GB-M14 6Q') AS lo, upper_bound('GB-M14 6Q') AS hi;
 SELECT lower_bound('GB-M14 6Z') AS lo, upper_bound('GB-M14 6Z') AS hi;
 SELECT 'GB-M14 6QA'::postal_code % 'GB-M14 6Q' AS yes, 'GB-M14 6RA'::postal_code % 'GB-M14 6Q' AS no,
        'GB-M14 6QZ'::postal_code <@ postal_prefix('GB-M14 6Q') AS inside, 'GB-M14 6RA'::postal_code <@ postal_prefix('GB-M14 6Q') AS outside;
-SELECT count(*) AS units_in_m14_6q FROM (SELECT postal_code('M14 6' || chr(64 + a) || chr(64 + b), 'GB') AS pc FROM generate_series(1, 26) a, generate_series(1, 26) b) x
+-- (the 20 letters a unit may end in: C I K M O V never occur)
+SELECT count(*) AS units_in_m14_6q FROM (SELECT to_postal_code('M14 6' || chr(64 + a) || chr(64 + b), 'GB') AS pc FROM generate_series(1, 26) a, generate_series(1, 26) b) x
 WHERE pc <@ postal_prefix('GB-M14 6Q');
 
 -- ===== A leading letter: Argentina ============================================
@@ -897,6 +898,31 @@ SELECT to_postal_prefix('GB-LS24') AS ok, to_postal_prefix('GB-LS24') = postal_p
 SELECT t AS text, to_postal_prefix(t) AS fragment
 FROM (VALUES ('US-902'), ('CA-K1A 0'), ('FR-75'), ('XX-12'), ('90210'), ('US-9A'), ('GB-A'), ('LU-L-'), (' us - 90 ')) v(t);
 SELECT count(*) AS valid_fragments FROM (VALUES ('US-9'), ('US-9x'), ('FR-75'), ('ZZ-1')) v(t) WHERE to_postal_prefix(t) IS NOT NULL;
+
+-- ===== The UK's letter rules ===================================================
+-- Royal Mail never uses C I K M O V in a unit, only A-H J K P S-U W after the digit of an A9A
+-- outcode (W1A, N1C ...), and only A B E H M N P R V-Y after the digit of an AA9A one (EC1A, SW1P ...).
+-- The `postcode` type has always been lenient about these; postal_code's GB format enforces them, so a
+-- typo like NG12 4FO (letter O for zero, which really occurs) is not stored.
+SELECT code, to_postal_code(code, 'GB') AS parsed, why
+FROM (VALUES ('SW1A 1AA', 'real'), ('NG12 4FO', 'unit letter O'), ('SW1A 1CC', 'unit letter C'), ('SW1A 1AI', 'unit letter I'),
+             ('SW1A 1MK', 'unit letters M K'), ('SW1A 1VV', 'unit letter V'), ('SW1A 1ZZ', 'Z is fine'), ('SW1A 1QX', 'Q X are fine'),
+             ('W1A 1AA', 'A9A third letter A'), ('N1C 4AG', 'A9A third letter C'), ('E1W 1AA', 'A9A third letter W'), ('W1I 1AA', 'A9A third letter I'),
+             ('W1Z 1AA', 'A9A third letter Z'), ('EC1A 1BB', 'AA9A fourth letter A'), ('EC1Y 8SY', 'AA9A fourth letter Y'),
+             ('EC1C 1BB', 'AA9A fourth letter C'), ('SW1Z 1AA', 'AA9A fourth letter Z'), ('SW1D 1AA', 'AA9A fourth letter D')) v(code, why);
+SELECT outcode, to_postal_code(outcode, 'GB') AS parsed
+FROM (VALUES ('W1C'), ('W1I'), ('EC1M'), ('EC1I'), ('LS1'), ('LS24'), ('LS1Z'), ('B1'), ('B99')) v(outcode);
+-- bounds skip the letters that can't occur, so they are still real codes
+SELECT lower_bound('GB-SW1A 1B') AS lo, upper_bound('GB-SW1A 1B') AS hi;
+SELECT lower_bound('GB-SW1A 1Z') AS lo, upper_bound('GB-SW1A 1Z') AS hi;
+SELECT lower_bound('GB-W1H') AS lo, upper_bound('GB-W1H') AS hi;
+SELECT lower_bound('GB-LS1B') AS lo, upper_bound('GB-LS1B') AS hi;
+SELECT lower_bound('GB-LS1Y') AS lo, upper_bound('GB-LS1Y') AS hi;
+SELECT to_postal_prefix('GB-SW1A 1C') AS no_unit_starts_with_c, to_postal_prefix('GB-SW1A 1D') IS NOT NULL AS d_is_fine;
+-- every unit under a sector, counted by range, equals the units that exist (20 letters x 20)
+SELECT count(*) AS units_in_sw1a_1 FROM (SELECT to_postal_code('SW1A 1' || chr(64 + a) || chr(64 + b), 'GB') AS pc FROM generate_series(1, 26) a, generate_series(1, 26) b) x
+WHERE pc <@ postal_prefix('GB-SW1A 1');
+SELECT 'NG12 4FO'::postcode AS the_postcode_type_stays_lenient;
 
 -- ===== Built-in and user assignments =========================================
 -- What ships with the extension is separate from what users assign, so a dump

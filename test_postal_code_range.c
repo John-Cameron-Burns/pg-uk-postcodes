@@ -256,7 +256,15 @@ int main (void) {
    RANGE_IS("GB", "LS1",        "LS1",         "LS10");     // district LS1 only, not LS1x
    RANGE_IS("GB", "LS24",       "LS24",        "LS25");
    RANGE_IS("GB", "LS19",       "LS19",        "LS1A");     // digits then letters
-   RANGE_IS("GB", "LS1Z",       "LS1Z",        "LS2");
+   RANGE_IS("GB", "LS1Y",       "LS1Y",        "LS2");      // the last district letter an area of two letters uses
+   NOT_A_FRAGMENT("GB", "LS1Z");                                 // Z is not one of them (A B E H M N P R V W X Y)
+   RANGE_IS("GB", "LS1B",       "LS1B",        "LS1E");      // the next district letter is E: C and D are skipped
+   RANGE_IS("GB", "SW1A 1B",    "SW1A 1BA",    "SW1A 1DA");  // unit letter C is skipped
+   RANGE_IS("GB", "SW1A 1Z",    "SW1A 1ZA",    "SW1A 2AA");  // after Z the next sector
+   NOT_A_FRAGMENT("GB", "SW1A 1C");                             // no unit starts with C (or I K M O V)
+   NOT_A_FRAGMENT("GB", "SW1A 1CA");
+   NOT_A_FRAGMENT("GB", "W1I");                                 // A9A: I is not one of A-H J K P S-U W
+   RANGE_IS("GB", "W1H",        "W1H",         "W1J");       // after H, J: I is skipped
    RANGE_IS("GB", "LS0",        "LS0",         "LS01");     // there is no LS00
    RANGE_IS("GB", "SW1A",       "SW1A",        "SW1B");
    RANGE_IS("GB", "LS9",        "LS9",         "LS90");

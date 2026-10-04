@@ -39,11 +39,36 @@ static inline bool gb_no_inward (postcode p) {
    return !GET_SECTOR(p) && !GET_WALK1(p) && !GET_WALK2(p);
 }
 
+// Royal Mail's letter rules (BS 7666). The shared UK parser and the `postcode` type do not enforce them
+// -- that type stays as lenient as it always was -- but postal_code's GB format does, so a typo such as
+// "NG12 4FO" (letter O for zero, which really occurs) is rejected rather than stored:
+//   unit letters         A B D E F G H J L N P Q R S T U W X Y Z   (never C I K M O V)
+//   A9A  (1-letter area) the letter after the digit is one of A-H J K P S-U W
+//   AA9A (2-letter area) the letter after the digit is one of A B E H M N P R V-Y
+// Letters are held as 1..26 (A = 1), the fields' own encoding.
+static const char GB_THIRD[]  = "ABCDEFGHJKPSTUW";
+static const char GB_FOURTH[] = "ABEHMNPRVWXY";
+static const char GB_UNIT[]   = "ABDEFGHJLNPQRSTUWXYZ";
+
+static bool in_set (const char *set, unsigned letter) {
+   return letter >= 1 && letter <= 26 && strchr(set, (int) ('A' + letter - 1)) != NULL;
+}
+static bool gb_unit_ok (unsigned v) { return in_set(GB_UNIT, v); }
+
+// d2 is the district's second field: 0 none, 1..10 the digits 0-9, 18..43 the letters A-Z
+static bool gb_d2_letter_ok (unsigned area, unsigned d2) {
+   if (d2 < 18) return true;
+   const char *a = areas[area - 1];
+   return in_set(a[1] ? GB_FOURTH : GB_THIRD, d2 - 17);
+}
+
 static bool gb_fields_ok (postcode p) {
    if (!valid_area(p) || !valid_district1(p) || !valid_district2(p)) return false;
    if (GET_DISTRICT1(p) == 1 && GET_DISTRICT2(p) == 1) return false; // district 00
+   if (!gb_d2_letter_ok(GET_AREA(p), GET_DISTRICT2(p))) return false;
    if (gb_no_inward(p)) return true; // outcode only
-   return valid_sector(p) && valid_walk1(p) && valid_walk2(p);
+   return valid_sector(p) && valid_walk1(p) && valid_walk2(p) &&
+          gb_unit_ok(GET_WALK1(p)) && gb_unit_ok(GET_WALK2(p));
 }
 
 static bool gb_parse (const char *str, bool partial, uint64_t *out) {
@@ -134,6 +159,7 @@ static bool gb_next_district (gbf *f) {
    else if (f->d2 == 10) n = 18;                      // after 9 comes A
    else if (f->d2 < 43)  n = f->d2 + 1;
    else                  n = 0;                       // after Z: carry
+   while (n >= 18 && !gb_d2_letter_ok(f->area, n)) n = n < 43 ? n + 1 : 0;   // skip letters this area never uses
    if (n) {
       f->d2 = n;
    } else if (f->d1 < 10) {
@@ -151,8 +177,12 @@ static bool gb_next_sector (gbf *f) {
 }
 
 static bool gb_next_walk (gbf *f) {
-   if (f->w2 < 26) { f->w2++; return true; }
-   if (f->w1 < 26) { f->w1++; f->w2 = 1; return true; }
+   unsigned w = f->w2 + 1;
+   while (w <= 26 && !gb_unit_ok(w)) w++;             // skip C I K M O V
+   if (w <= 26) { f->w2 = w; return true; }
+   w = f->w1 + 1;
+   while (w <= 26 && !gb_unit_ok(w)) w++;
+   if (w <= 26) { f->w1 = w; f->w2 = 1; return true; }    // 1 = 'A', always allowed
    return gb_next_sector(f);
 }
 
@@ -184,8 +214,9 @@ static bool gb_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
         (GET_DISTRICT1(b) == 1 && GET_DISTRICT2(b) == 1))) return false;
    if (GET_SECTOR(b) && !valid_sector(b)) return false;
    // a unit may be only its first letter ("M14 6Q", a prefix of "M14 6QA"): walk2 unset
-   if (GET_WALK1(b) && !valid_walk1(b)) return false;
-   if (GET_WALK2(b) && !valid_walk2(b)) return false;
+   if (GET_WALK1(b) && !(valid_walk1(b) && gb_unit_ok(GET_WALK1(b)))) return false;
+   if (GET_WALK2(b) && !(valid_walk2(b) && gb_unit_ok(GET_WALK2(b)))) return false;
+   if (!gb_d2_letter_ok(GET_AREA(b), GET_DISTRICT2(b))) return false;
 
    gbf f = { GET_AREA(b), GET_DISTRICT1(b), GET_DISTRICT2(b),
              GET_SECTOR(b), GET_WALK1(b), GET_WALK2(b) };
@@ -194,7 +225,9 @@ static bool gb_range (const char *str, uint64_t *lo, uint64_t *hi, bool *unbound
    if (f.w1 && !f.w2) {                             // sector + the unit's first letter
       f.w2 = 1;
       *lo = gb_make(&f);
-      if (f.w1 < 26) { f.w1++; ok = true; } else ok = gb_next_sector(&f);
+      unsigned nw = f.w1 + 1;                      // the next first letter that is allowed
+      while (nw <= 26 && !gb_unit_ok(nw)) nw++;
+      if (nw <= 26) { f.w1 = nw; ok = true; } else ok = gb_next_sector(&f);
    } else if (f.w1) {                               // a full postcode
       *lo = gb_make(&f);
       ok = gb_next_walk(&f);
