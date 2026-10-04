@@ -22,9 +22,9 @@ the Ireland file, French codes in Luxembourg's, Dutch codes in Germany's); those
 
 | Check | Result |
 |---|---|
-| OpenStreetMap `addr:postcode` values parsed | **99.84%** of 116.3 million (97.49% of distinct values) |
+| OpenStreetMap `addr:postcode` values parsed | **99.85%** of 116.3 million (97.66% of distinct values) |
 | OpenStreetMap postcode areas (`postal_code=*`, the mapped areas) | **99.42%** of 1.18 million |
-| GeoNames | 1,826,904 codes in 121 countries: all load except 21 French non-codes and one American Samoa ZIP filed under Samoa |
+| GeoNames | 1,826,904 codes in 121 countries: all load except 21 French non-codes, one American Samoa ZIP filed under Samoa and the UK's `W1M` (not a Royal Mail outcode) |
 | Companies House non-UK registered offices | **94.2%** of 24,244 parse; the rest are PO boxes, placeholders and text around a code |
 | Round trip through text, 1,978,596 distinct parsed codes | 0 failures |
 | Round trip through `COPY ... (FORMAT binary)` | 0 lost, 0 invented |
@@ -42,15 +42,15 @@ the Ireland file, French codes in Luxembourg's, Dutch codes in Germany's); those
 * **`pg_dump` failed on any database with the extension installed.** A configuration-table condition
   named a table unqualified, and `pg_dump` runs with an empty `search_path`. Found by dumping a real
   database. A regression test now runs every dump condition under an empty `search_path`.
-* **The same empty `search_path` broke the country and template lookups during a restore.** They now
+* **The same empty `search_path` broke the country and language lookups during a restore.** They now
   name their tables with the extension's schema.
 * **Other scripts' digits, dashes and spaces** (Persian, Arabic-Indic, Bengali, Burmese, Devanagari,
   Thai, full-width digits; Unicode hyphens and minus signs; no-break spaces; zero-width characters;
   Japan's `〒`; Malta's native letters) are re-spelled as the ASCII they stand for.
 * **Brazil's CEP** is usually written without its hyphen (39,445 values) or as `06.026-170`; a US
   ZIP+4 likewise may lack its hyphen.
-* **Argentina's province letter** (`B1832`, `B1832GMR`) is 21% of its 831,000 values; templates gained
-  an optional leading group of letters to hold it.
+* **Argentina's province letter** (`B1832`, `B1832GMR`) is 21% of its 831,000 values; its pattern holds all three forms
+  (`1832`, `B1832`, `B1832GMR`).
 * **Fragments** may stop part-way through a UK unit (`M14 6Q`), or right after a ZIP+4 or CEP hyphen
   (a text prefix, so it excludes the bare code), and `L-` is every Luxembourg code.
 * **Colombia, Mozambique and Iran** take their optional extension block; Panama takes 4 and 5 digits.
@@ -66,16 +66,11 @@ the Ireland file, French codes in Luxembourg's, Dutch codes in Germany's); those
 
 These are real forms the formats do not hold, listed with how much of the data they are.
 
-* **Taiwan `NNN-NN`** (the older 5-digit form, 0.4% of Taiwan's values) and **Ghana's 6-character
-  form**: a template holds one optional tail, so it cannot accept three lengths.
-* **Kazakhstan's newer alphanumeric codes** (`A05B1H4`, 606 values, under 2%) and **Myanmar's
-  `NNNN-NNNN`** (778 values): too little evidence of the real rule to model.
+* **Myanmar's `NNNN-NNNN`** (778 values): too little evidence of the real rule to model.
 * **Leading zeros lost in the source** (France `1000` for `01000`, Italy, Germany, Finland, Croatia):
   rejected, deliberately, rather than guessed.
 * **Text around a code** (`DE 19801`, `NSW 2000`, `1200-445 LISBON`, `PO BOX 3085`), lists and ranges
   (`08296, 08297`, `07500-07571`): data cleaning, not a postcode.
-* **Single-code territories** (the British Overseas Territories, Vatican, San Marino, Monaco, the
-  French territories) accept any code of the right shape, since a template cannot fix digits.
 * **The UK format's `GX` (Gibraltar) sorts after `ZE`**, not alphabetically, because the area list is
   append-only; and a bare area letter (`GB-A`) is not a fragment because the areas starting with it are
   not contiguous. The UK format also reads `GB-AB1` as district 1 and `GB-B` as area B, so it is

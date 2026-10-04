@@ -12,7 +12,7 @@ functions, operators and operator classes are unchanged, and stored values are u
   extend it (an outcode, a ZIP5 before its ZIP+4s).
 * Formats for 194 of the 250 ISO countries and territories; the other 56 have no postal codes
   (`SELECT * FROM postal_code_world`). Eight formats are compiled (US, CA, FR, BR, CZ, LU, GB, IE); the
-  rest are *templates*, and a new country is added with SQL: `add_country_template('PL', 'NN-NNN')`.
+  rest are *patterns* -- a template or a bounded regular expression that defines the whole set of a country's codes (a code is stored as its rank in that set, so order, validity and prefix ranges are exact) -- and a new country is added with SQL: `add_country_template('PL', 'NN-NNN')` or `add_country_template('NL', '/[1-9]\d{3}( [A-Z]{2})?/')`. Country rules narrower than a code's shape are built in (`NARROWING.md`); the UK format enforces Royal Mail's letter rules.
 * Prefix matching as a btree range scan: `postal_prefix()`, `to_postal_prefix()`, `lower_bound()`,
   `upper_bound()`, the `postal_code_range` type, and the `%` / `!%` operators. `outcode()` / `district()`.
 * `is_valid()` and the NULL-returning `to_postal_code()` for loading dirty feeds. Input tolerates the
@@ -35,8 +35,10 @@ and `pc % '...'` or `pc >= lower_bound(...) AND pc < upper_bound(...)` is the in
 * `postal_code_in` and the two-argument constructor are `STABLE`, not `IMMUTABLE`, because they depend on
   the country table, so they cannot be used in an index expression. Indexing a `postal_code` column is
   unaffected.
-* A template's slot is permanent once a value has been written under it; to change a country's format,
-  assign it a new template. See `README.md`.
+* A pattern is permanent once a value has been written under it (each country has 51 versions); to change a
+  country's rules, assign it a new pattern. See `README.md`.
+* Where separators are dropped from UK outcode or sector text, `SW11` is read as the outcode `SW11`, not
+  `SW1 1`; a full postcode is unambiguous.
 * Validated on 117 million OpenStreetMap postcodes, 1.8 million GeoNames codes and 24,000 Companies House
   addresses; `VALIDATION.md` has the method, results, and the known gaps.
 

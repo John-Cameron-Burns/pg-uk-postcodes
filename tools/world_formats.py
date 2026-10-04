@@ -44,10 +44,9 @@ W = {
  'AS': ('/96799%s/' % ZIP4, 'G'), 'GU': ('/969\\d{2}%s/' % ZIP4, 'G'), 'PR': ('/00[6-9]\\d{2}%s/' % ZIP4, 'G'),
  'VI': ('/008\\d{2}%s/' % ZIP4, 'G'), 'MH': ('/969[67]\\d%s/' % ZIP4, 'G'), 'FM': ('/9694[1-4]%s/' % ZIP4, 'G'),
  'MP': ('/9695[0-2]%s/' % ZIP4, 'G'), 'PW': ('/96940%s/' % ZIP4, 'G'), 'UM': ('/96898%s/' % ZIP4, 'W'),
- # ---- French overseas: 97xxx and 98xxx; a few are a single code ----
- 'GF': ('/9[78]\\d{3}/','G'), 'GP': ('/9[78]\\d{3}/','G'), 'MQ': ('/9[78]\\d{3}/','G'), 'RE': ('/9[78]\\d{3}/','G'),
- 'YT': ('/9[78]\\d{3}/','G'), 'NC': ('/9[78]\\d{3}/','G'), 'PF': ('/9[78]\\d{3}/','G'), 'WF': ('/9[78]\\d{3}/','G'),
- 'PM': ('/97500/','G'), 'BL': ('/97133/','W'), 'MF': ('/97150/','W'),
+ # ---- French overseas: the French format, whose CEDEX the post offices there use too ----
+ 'GF': (FR,'G'), 'GP': (FR,'G'), 'MQ': (FR,'G'), 'RE': (FR,'G'), 'YT': (FR,'G'), 'NC': (FR,'G'), 'PF': (FR,'G'), 'WF': (FR,'G'),
+ 'PM': (FR,'G'), 'BL': (FR,'W'), 'MF': (FR,'W'),
  # ---- the British Overseas Territories: one code each ----
  'FK': ('/FIQQ 1ZZ/','G'), 'GS': ('/SIQQ 1ZZ/','G'), 'IO': ('/BBND 1ZZ/','G'), 'PN': ('/PCRN 1ZZ/','G'),
  'TC': ('/TKCA 1ZZ/','G'), 'AQ': ('/BIQQ 1ZZ/','W'), 'SH': ('/(STHL|ASCN|TDCU) 1ZZ/','W'),
@@ -133,11 +132,9 @@ NOTES = {
  'UM': 'US ZIP (96898)',
  'PR': 'US ZIPs 006xx to 009xx', 'VI': 'US ZIPs 008xx', 'GU': 'US ZIPs 969xx', 'MH': 'US ZIPs 96960 to 96979 (969 6x/7x)',
  'FM': 'US ZIPs 96941 to 96944', 'MP': 'US ZIPs 96950 to 96952', 'PW': 'US ZIP 96940', 'AS': 'US ZIP 96799',
- 'GF': 'French overseas, 97xxx or 98xxx (GeoNames files a few 970xx and 977xx under the departments)',
- 'GP': 'French overseas, 97xxx or 98xxx', 'MQ': 'French overseas, 97xxx or 98xxx', 'RE': 'French overseas, 97xxx or 98xxx',
- 'YT': 'French overseas, 97xxx or 98xxx', 'NC': 'French overseas, 97xxx or 98xxx', 'PF': 'French overseas, 97xxx or 98xxx',
- 'WF': 'French overseas, 97xxx or 98xxx',
- 'PM': 'a single code, 97500', 'BL': 'a single code, 97133', 'MF': 'a single code, 97150',
+ 'GF': 'the French format: the overseas departments use CEDEX too, which a 97xxx/98xxx pattern would refuse (GeoNames has "97305 CEDEX")',
+ 'GP': 'the French format (CEDEX)', 'MQ': 'the French format (CEDEX)', 'RE': 'the French format (CEDEX)', 'YT': 'the French format (CEDEX)',
+ 'NC': 'the French format', 'PF': 'the French format', 'WF': 'the French format', 'PM': 'the French format', 'BL': 'the French format', 'MF': 'the French format',
  'AQ': 'a single code, BIQQ 1ZZ', 'FK': 'a single code, FIQQ 1ZZ', 'GS': 'a single code, SIQQ 1ZZ', 'IO': 'a single code, BBND 1ZZ',
  'PN': 'a single code, PCRN 1ZZ', 'TC': 'a single code, TKCA 1ZZ', 'SH': 'three codes: STHL, ASCN and TDCU, each 1ZZ',
  'AI': 'a single code, 2640 (written AI-2640)', 'VA': 'a single code, 00120', 'SM': '4789x', 'MC': '980xx', 'LI': '9485 to 9498',

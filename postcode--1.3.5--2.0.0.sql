@@ -562,7 +562,6 @@ INSERT INTO postal_code_languages (iso2, version, source, pattern, builtin)
    ('BE', '/[1-9]\d{3}/'),
    ('BG', '/[1-9]\d{3}/'),
    ('BH', 'NNN[N]'),
-   ('BL', '/97133/'),
    ('BM', 'AA XX'),
    ('BN', '/[A-Z]{2}\d{4}/'),
    ('BT', 'NNNNN'),
@@ -591,11 +590,9 @@ INSERT INTO postal_code_languages (iso2, version, source, pattern, builtin)
    ('FM', '/9694[1-4](-([1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/'),
    ('FO', '/[1-9]\d{2}/'),
    ('GE', 'NNNN'),
-   ('GF', '/9[78]\d{3}/'),
    ('GH', '/[A-Z][A-Z0-9]\d{3,5}/'),
    ('GL', 'NNNN'),
    ('GN', 'NNN'),
-   ('GP', '/9[78]\d{3}/'),
    ('GR', '/[1-8]\d{2} \d{2}/'),
    ('GS', '/SIQQ 1ZZ/'),
    ('GT', 'NNNNN'),
@@ -639,7 +636,6 @@ INSERT INTO postal_code_languages (iso2, version, source, pattern, builtin)
    ('MC', '/980\d{2}/'),
    ('MD', 'NNNN'),
    ('ME', 'NNNNN'),
-   ('MF', '/97150/'),
    ('MG', 'NNN'),
    ('MH', '/969[67]\d(-([1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/'),
    ('MK', 'NNNN'),
@@ -647,7 +643,6 @@ INSERT INTO postal_code_languages (iso2, version, source, pattern, builtin)
    ('MN', 'NNNNN'),
    ('MO', 'NNNNNN'),
    ('MP', '/9695[0-2](-([1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/'),
-   ('MQ', '/9[78]\d{3}/'),
    ('MS', '/MSR \d{4}/'),
    ('MT', 'AAA[ NNNN]'),
    ('MU', '/[0-9A-Z]\d{4}/'),
@@ -657,7 +652,6 @@ INSERT INTO postal_code_languages (iso2, version, source, pattern, builtin)
    ('MY', '/(0[1-9]|[1-9]\d)\d{3}/'),
    ('MZ', 'NNNN[-NN]'),
    ('NA', 'NNNNN'),
-   ('NC', '/9[78]\d{3}/'),
    ('NE', 'NNNN'),
    ('NF', 'NNNN'),
    ('NG', 'NNNNNN'),
@@ -671,19 +665,16 @@ INSERT INTO postal_code_languages (iso2, version, source, pattern, builtin)
    ('OM', 'NNN'),
    ('PA', 'NNNN[N]'),
    ('PE', 'NNNNN'),
-   ('PF', '/9[78]\d{3}/'),
    ('PG', 'NNN'),
    ('PH', 'NNNN'),
    ('PK', '/[1-9]\d{4}/'),
    ('PL', 'NN-NNN'),
-   ('PM', '/97500/'),
    ('PN', '/PCRN 1ZZ/'),
    ('PR', '/00[6-9]\d{2}(-([1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/'),
    ('PS', 'NNN'),
    ('PT', '/[1-9]\d{3}(-\d{3})?/'),
    ('PW', '/96940(-([1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/'),
    ('PY', 'NNNN[NN]'),
-   ('RE', '/9[78]\d{3}/'),
    ('RO', 'NNNNNN'),
    ('RS', 'NNNNN'),
    ('RU', 'NNNNNN'),
@@ -719,10 +710,8 @@ INSERT INTO postal_code_languages (iso2, version, source, pattern, builtin)
    ('VG', 'NNNN'),
    ('VI', '/008\d{2}(-([1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/'),
    ('VN', 'NNNNN[N]'),
-   ('WF', '/9[78]\d{3}/'),
    ('WS', 'NNNN'),
    ('XK', 'NNNNN'),
-   ('YT', '/9[78]\d{3}/'),
    ('ZA', 'NNNN'),
    ('ZM', 'NNNNN')
 ) v(iso2, spec);
@@ -746,7 +735,7 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('BE', 'pattern'),
    ('BG', 'pattern'),
    ('BH', 'pattern'),
-   ('BL', 'pattern'),
+   ('BL', 'FR'),
    ('BM', 'pattern'),
    ('BN', 'pattern'),
    ('BT', 'pattern'),
@@ -775,12 +764,12 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('FM', 'pattern'),
    ('FO', 'pattern'),
    ('GE', 'pattern'),
-   ('GF', 'pattern'),
+   ('GF', 'FR'),
    ('GH', 'pattern'),
    ('GI', 'GB'),
    ('GL', 'pattern'),
    ('GN', 'pattern'),
-   ('GP', 'pattern'),
+   ('GP', 'FR'),
    ('GR', 'pattern'),
    ('GS', 'pattern'),
    ('GT', 'pattern'),
@@ -824,7 +813,7 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('MC', 'pattern'),
    ('MD', 'pattern'),
    ('ME', 'pattern'),
-   ('MF', 'pattern'),
+   ('MF', 'FR'),
    ('MG', 'pattern'),
    ('MH', 'pattern'),
    ('MK', 'pattern'),
@@ -832,7 +821,7 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('MN', 'pattern'),
    ('MO', 'pattern'),
    ('MP', 'pattern'),
-   ('MQ', 'pattern'),
+   ('MQ', 'FR'),
    ('MS', 'pattern'),
    ('MT', 'pattern'),
    ('MU', 'pattern'),
@@ -842,7 +831,7 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('MY', 'pattern'),
    ('MZ', 'pattern'),
    ('NA', 'pattern'),
-   ('NC', 'pattern'),
+   ('NC', 'FR'),
    ('NE', 'pattern'),
    ('NF', 'pattern'),
    ('NG', 'pattern'),
@@ -856,19 +845,19 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('OM', 'pattern'),
    ('PA', 'pattern'),
    ('PE', 'pattern'),
-   ('PF', 'pattern'),
+   ('PF', 'FR'),
    ('PG', 'pattern'),
    ('PH', 'pattern'),
    ('PK', 'pattern'),
    ('PL', 'pattern'),
-   ('PM', 'pattern'),
+   ('PM', 'FR'),
    ('PN', 'pattern'),
    ('PR', 'pattern'),
    ('PS', 'pattern'),
    ('PT', 'pattern'),
    ('PW', 'pattern'),
    ('PY', 'pattern'),
-   ('RE', 'pattern'),
+   ('RE', 'FR'),
    ('RO', 'pattern'),
    ('RS', 'pattern'),
    ('RU', 'pattern'),
@@ -904,10 +893,10 @@ INSERT INTO postal_code_builtin_countries (iso2, format_name) VALUES
    ('VG', 'pattern'),
    ('VI', 'pattern'),
    ('VN', 'pattern'),
-   ('WF', 'pattern'),
+   ('WF', 'FR'),
    ('WS', 'pattern'),
    ('XK', 'pattern'),
-   ('YT', 'pattern'),
+   ('YT', 'FR'),
    ('ZA', 'pattern'),
    ('ZM', 'pattern');
 INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
@@ -962,7 +951,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('BJ', 'Benin
 ', 'no postal codes', NULL),
    ('BL', 'Saint Barthélemy
-', 'Wikipedia', 'a single code, 97133'),
+', 'Wikipedia', 'the French format'),
    ('BM', 'Bermuda
 ', 'see note', 'AA NN; the second pair is sometimes letters, so X; Wikipedia lists AA NN and AA AA'),
    ('BN', 'Brunei
@@ -1068,7 +1057,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('GE', 'Georgia
 ', 'Wikipedia', NULL),
    ('GF', 'French Guiana
-', 'GeoNames data', 'French overseas, 97xxx or 98xxx (GeoNames files a few 970xx and 977xx under the departments)'),
+', 'GeoNames data', 'the French format: the overseas departments use CEDEX too, which a 97xxx/98xxx pattern would refuse (GeoNames has "97305 CEDEX")'),
    ('GG', 'Guernsey
 ', 'built in', NULL),
    ('GH', 'Ghana
@@ -1082,7 +1071,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('GN', 'Guinea
 ', 'Wikipedia', NULL),
    ('GP', 'Guadeloupe
-', 'GeoNames data', 'French overseas, 97xxx or 98xxx'),
+', 'GeoNames data', 'the French format (CEDEX)'),
    ('GQ', 'Equatorial Guinea
 ', 'no postal codes', NULL),
    ('GR', 'Greece
@@ -1190,7 +1179,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('ME', 'Montenegro
 ', 'Wikipedia', NULL),
    ('MF', 'Saint Martin
-', 'Wikipedia', 'a single code, 97150'),
+', 'Wikipedia', 'the French format'),
    ('MG', 'Madagascar
 ', 'Wikipedia', NULL),
    ('MH', 'Marshall Islands
@@ -1208,7 +1197,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('MP', 'Northern Mariana Islands
 ', 'GeoNames data', 'US ZIPs 96950 to 96952'),
    ('MQ', 'Martinique
-', 'GeoNames data', 'French overseas, 97xxx or 98xxx'),
+', 'GeoNames data', 'the French format (CEDEX)'),
    ('MR', 'Mauritania
 ', 'no postal codes', NULL),
    ('MS', 'Montserrat
@@ -1230,7 +1219,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('NA', 'Namibia
 ', 'Wikipedia', NULL),
    ('NC', 'New Caledonia
-', 'GeoNames data', 'French overseas, 97xxx or 98xxx'),
+', 'GeoNames data', 'the French format'),
    ('NE', 'Niger
 ', 'Wikipedia', NULL),
    ('NF', 'Norfolk Island
@@ -1258,7 +1247,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('PE', 'Peru
 ', 'GeoNames data', 'five digits; Wikipedia also lists a CC NNNN form, not accepted'),
    ('PF', 'French Polynesia
-', 'GeoNames data', 'French overseas, 97xxx or 98xxx'),
+', 'GeoNames data', 'the French format'),
    ('PG', 'Papua New Guinea
 ', 'Wikipedia', NULL),
    ('PH', 'Philippines
@@ -1268,7 +1257,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('PL', 'Poland
 ', 'GeoNames data', NULL),
    ('PM', 'Saint Pierre and Miquelon
-', 'GeoNames data', 'a single code, 97500'),
+', 'GeoNames data', 'the French format'),
    ('PN', 'Pitcairn Islands
 ', 'GeoNames data', 'a single code, PCRN 1ZZ'),
    ('PR', 'Puerto Rico
@@ -1284,7 +1273,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('QA', 'Qatar
 ', 'no postal codes', NULL),
    ('RE', 'Réunion
-', 'GeoNames data', 'French overseas, 97xxx or 98xxx'),
+', 'GeoNames data', 'the French format (CEDEX)'),
    ('RO', 'Romania
 ', 'GeoNames data', NULL),
    ('RS', 'Serbia
@@ -1394,7 +1383,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('VU', 'Vanuatu
 ', 'no postal codes', NULL),
    ('WF', 'Wallis and Futuna
-', 'GeoNames data', 'French overseas, 97xxx or 98xxx'),
+', 'GeoNames data', 'the French format'),
    ('WS', 'Samoa
 ', 'see note', 'Wikipedia: four digits; the one GeoNames row is American Samoa''s ZIP, filed under the wrong country'),
    ('XK', 'Kosovo
@@ -1402,7 +1391,7 @@ INSERT INTO postal_code_iso_countries (iso2, name, basis, note) VALUES
    ('YE', 'Yemen
 ', 'no postal codes', NULL),
    ('YT', 'Mayotte
-', 'GeoNames data', 'French overseas, 97xxx or 98xxx'),
+', 'GeoNames data', 'the French format (CEDEX)'),
    ('ZA', 'South Africa
 ', 'GeoNames data', NULL),
    ('ZM', 'Zambia
