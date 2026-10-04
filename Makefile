@@ -22,33 +22,35 @@ override CFLAGS := $(filter-out -Wdeclaration-after-statement, $(CFLAGS))
 # that still have the old value compiled in -- which bit this build once.
 $(OBJS): postal_code.h postal_code_fmt.h postal_code_country.h postal_code_template.h postal_code_tpl.h postcode.h binfmt.h areas.h dps.h
 
-# "binary" (COPY ... WITH BINARY, exercising postcode's/dps's binary
-# send/recv functions -- a completely separate code path from the
-# text-based tests that make up the rest of this suite) was never
-# actually wired up to run: input/binary.source needs its @abs_srcdir@
-# token substituted into a real sql/binary.sql before pg_regress can use
-# it, and PGXS (unlike the full Postgres source tree's own regress
-# GNUmakefile) doesn't supply that substitution rule automatically for
-# out-of-tree extensions -- confirmed missing even in the pristine
-# upstream 1.3.1 source, so this was never a working test, not something
-# broken by the 1.3.2 fix. Added 2026-08-31.
+# "binary" (COPY ... WITH BINARY, exercising postcode's/dps's binary send/recv functions -- a
+# completely separate code path from the text-based tests that make up the rest of this suite)
+# reads a data file from a fixed path, so input/binary.source is turned into sql/binary.sql with
+# its @abs_srcdir@ token substituted, and the data file is staged there. PGXS (unlike the full
+# PostgreSQL source tree's regress makefile) does not do that substitution for out-of-tree
+# extensions. It is ALWAYS regenerated (a phony target, not a file rule) and sql/binary.sql is not
+# tracked or shipped: a stale copy from another checkout would be newer than its source, skip the
+# staging step, and fail the test.
 #
-# Substitutes a FIXED staging path, not $(CURDIR)/the real build
-# directory -- so expected/binary.out (which necessarily contains the
-# substituted path verbatim, since pg_regress diffs the echoed query
-# text too) can be one portable, checked-in file that matches on any
-# machine, not something that has to be regenerated per build location.
-# (The previous expected/binary.out had the ORIGINAL upstream author's
-# own literal dev path baked in -- /home/dave/dev/postcode/... -- which
-# is exactly this same problem, unsolved.)
+# The staging path is FIXED, not $(CURDIR), so expected/binary.out (which contains the substituted
+# path, since pg_regress diffs the echoed query text too) is one portable checked-in file.
 BINARY_TEST_DIR = /tmp/postcode_binary_test
 
-sql/binary.sql: input/binary.source
+.PHONY: binary-test-fixture
+binary-test-fixture:
 	mkdir -p $(BINARY_TEST_DIR)/data
 	cp data/binary.data $(BINARY_TEST_DIR)/data/binary.data
-	sed 's,@abs_srcdir@,$(BINARY_TEST_DIR),g' $< > $@
+	sed 's,@abs_srcdir@,$(BINARY_TEST_DIR),g' input/binary.source > sql/binary.sql
 
-installcheck: sql/binary.sql
-check: sql/binary.sql
+installcheck: binary-test-fixture
+check: binary-test-fixture
 
 EXTRA_CLEAN = sql/binary.sql
+
+# postcode--$(EXTVERSION).sql is generated from the upgrade script (see tools/build_install_script.sh).
+.PHONY: install-script verify-install-script
+install-script:
+	sh tools/build_install_script.sh > postcode--$(EXTVERSION).sql
+
+verify-install-script:
+	sh tools/build_install_script.sh | diff -u postcode--$(EXTVERSION).sql - \
+	   && echo "postcode--$(EXTVERSION).sql is up to date with postcode--1.3.5--$(EXTVERSION).sql"

@@ -1,0 +1,41 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    name: PostgreSQL ${{ matrix.pg }}
+    runs-on: ubuntu-latest
+    container: pgxn/pgxn-tools
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [14, 15, 16, 17, 18]
+    steps:
+      - name: Start PostgreSQL ${{ matrix.pg }}
+        run: pg-start ${{ matrix.pg }}
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: The full install script matches the upgrade script
+        run: make verify-install-script
+      - name: Build, install and run the regression suite
+        run: pg-build-test
+
+  standalone:
+    name: Standalone encoder tests (no PostgreSQL)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Build and run
+        run: |
+          set -euo pipefail
+          enc="postal_code_fmt.c postal_code_us.c postal_code_ca.c postal_code_fr.c postal_code_br.c postal_code_cz.c postal_code_lu.c postal_code_gb.c postal_code_ie.c binfmt.c"
+          cc -std=c99 -DEXTVERSION=test -o test_postal_code test_postal_code.c $enc && ./test_postal_code
+          cc -std=c99 -DEXTVERSION=test -o test_postal_code_range test_postal_code_range.c $enc && ./test_postal_code_range
+          cc -std=c99 -DEXTVERSION=test -o test_postal_code_template test_postal_code_template.c postal_code_template.c $enc && ./test_postal_code_template
