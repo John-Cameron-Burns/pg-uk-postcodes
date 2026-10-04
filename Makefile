@@ -24,12 +24,13 @@ $(OBJS): postal_code.h postal_code_fmt.h postal_code_country.h postal_code_templ
 
 # "binary" (COPY ... WITH BINARY, exercising postcode's/dps's binary send/recv functions -- a
 # completely separate code path from the text-based tests that make up the rest of this suite)
-# reads a data file from a fixed path, so input/binary.source is turned into sql/binary.sql with
+# reads a data file from a fixed path, so sql/binary.sql.in is turned into sql/binary.sql with
 # its @abs_srcdir@ token substituted, and the data file is staged there. PGXS (unlike the full
 # PostgreSQL source tree's regress makefile) does not do that substitution for out-of-tree
 # extensions. It is ALWAYS regenerated (a phony target, not a file rule) and sql/binary.sql is not
 # tracked or shipped: a stale copy from another checkout would be newer than its source, skip the
-# staging step, and fail the test.
+# staging step, and fail the test. The template is deliberately NOT under input/: PostgreSQL 14's
+# pg_regress converts input/*.source itself, with the build directory as @abs_srcdir@, overwriting this.
 #
 # The staging path is FIXED, not $(CURDIR), so expected/binary.out (which contains the substituted
 # path, since pg_regress diffs the echoed query text too) is one portable checked-in file.
@@ -39,7 +40,7 @@ BINARY_TEST_DIR = /tmp/postcode_binary_test
 binary-test-fixture:
 	mkdir -p $(BINARY_TEST_DIR)/data
 	cp data/binary.data $(BINARY_TEST_DIR)/data/binary.data
-	sed 's,@abs_srcdir@,$(BINARY_TEST_DIR),g' input/binary.source > sql/binary.sql
+	sed 's,@abs_srcdir@,$(BINARY_TEST_DIR),g' sql/binary.sql.in > sql/binary.sql
 
 installcheck: binary-test-fixture
 check: binary-test-fixture
