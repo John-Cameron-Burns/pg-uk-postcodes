@@ -30,7 +30,7 @@ the Ireland file, French codes in Luxembourg's, Dutch codes in Germany's); those
 | Round trip through `COPY ... (FORMAT binary)` | 0 lost, 0 invented |
 | Country of the value equals the country it was parsed for | 0 mismatches |
 | `outcode()` idempotent, and never after its value | 0 failures |
-| `is_valid()` agrees with `to_postal_code()` | 0 disagreements |
+| `is_valid_postal_code()` agrees with `to_postal_code()` | 0 disagreements |
 | Type order equals text order, within each country | 0 out of order (one documented exception, below) |
 | Prefix ranges: 698,618 distinct prefixes of those codes, `postal_prefix` count against a plain text count | **0 mismatches**, 0 fragments refused |
 | `1.3.5 -> 2.0.0` upgrade of a database holding 829,216 UK postcodes | identical checksums before and after, same partial-match results, and the same 145 extension objects as a fresh 2.0.0 install; 16 of the 829,216 break Royal Mail's letter rules (e.g. `BT47 5MR`) and are refused by `postal_code` |

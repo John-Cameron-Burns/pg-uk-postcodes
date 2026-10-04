@@ -1,5 +1,19 @@
 # Changes
 
+## 2.0.1
+
+**Upgrading from 2.0.0 or 1.3.x:** `ALTER EXTENSION postcode UPDATE;`
+
+* **`is_valid(text)` and `is_valid(text, text)` are replaced by one function,
+  `is_valid_postal_code(postcode text, cc text DEFAULT NULL)`.** Same arguments and results; the country is
+  now optional. Callers of `is_valid(...)` must change. A bare `is_valid` collided with another extension's
+  `is_valid(text)` (`gsscode`, installed in the first production database 2.0.0 was tried on) and, wherever the `isn` extension
+  is installed, was ambiguous for an untyped literal (`is_valid('US-90210')` failed with "function
+  is_valid(unknown) is not unique").
+* A database still on 1.3.x upgrades directly to 2.0.1 and never creates `is_valid`; a database on 2.0.0
+  has the two old functions dropped and the new one created. Nothing else changes: the data, the types and
+  the other functions are as in 2.0.0.
+
 ## 2.0.0
 
 **Upgrading from 1.3.x:** `ALTER EXTENSION postcode UPDATE;`. The `postcode` and `dps` types, their
@@ -15,7 +29,7 @@ functions, operators and operator classes are unchanged, and stored values are u
   rest are *patterns* -- a template or a bounded regular expression that defines the whole set of a country's codes (a code is stored as its rank in that set, so order, validity and prefix ranges are exact) -- and a new country is added with SQL: `add_country_template('PL', 'NN-NNN')` or `add_country_template('NL', '/[1-9]\d{3}( [A-Z]{2})?/')`. Country rules narrower than a code's shape are built in (`NARROWING.md`); the UK format enforces Royal Mail's letter rules.
 * Prefix matching as a btree range scan: `postal_prefix()`, `to_postal_prefix()`, `lower_bound()`,
   `upper_bound()`, the `postal_code_range` type, and the `%` / `!%` operators. `outcode()` / `district()`.
-* `is_valid()` and the NULL-returning `to_postal_code()` for loading dirty feeds. Input tolerates the
+* `is_valid()` (renamed `is_valid_postal_code()` in 2.0.1) and the NULL-returning `to_postal_code()` for loading dirty feeds. Input tolerates the
   spellings real data uses (other scripts' digits, Unicode dashes and spaces, missing hyphens, the
   country's own letters in front) and nothing else.
 * A column can be locked to a country: `pc postal_code('US')`.

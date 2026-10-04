@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Splices the generated world-format SQL into postcode--1.3.5--2.0.0.sql.
+"""Splices the generated world-format SQL into postcode--1.3.5--2.0.1.sql.
 usage: python3 tools/splice.py     (country names come from tools/world_names.tsv)"""
 import subprocess, sys, re
 sql = subprocess.check_output([sys.executable, 'tools/world_formats.py', '--sql', 'tools/world_names.tsv'], text=True)
-p = 'postcode--1.3.5--2.0.0.sql'
+p = 'postcode--1.3.5--2.0.1.sql'
 s = open(p).read()
 if '@@GENERATED@@' in s:
     s = s.replace('@@GENERATED@@\n', sql)

@@ -15,15 +15,15 @@ Status as of 2026-10-03. **All six requirements below are implemented**, plus th
 
 1. **Separator `CC-` instead of `CC:`** -- done (`91d8a63`).
 
-2. **Constructor taking `(postcode, cc)`; `cc` may be NULL when the postcode carries a `CC-` prefix; an error if they disagree** -- done (`bb04ec2`). `postal_code(postcode, cc)`; the same rules apply to `to_postal_code(postcode, cc)` and `is_valid(postcode, cc)`, which give NULL / false where the strict form raises.
+2. **Constructor taking `(postcode, cc)`; `cc` may be NULL when the postcode carries a `CC-` prefix; an error if they disagree** -- done (`bb04ec2`). `postal_code(postcode, cc)`; the same rules apply to `to_postal_code(postcode, cc)` and `is_valid_postal_code(postcode, cc)`, which give NULL / false where the strict form raises.
 
 3. **Where there is a distinct outcode and incode (UK, Ireland, Canada, USA), the outcode alone is a valid postcode; where the leading digits are only implicitly an outcode (France), the full code is required** -- done (`91d8a63`). `GB-SW1A`, `IE-D02`, `CA-K1A`, `US-90210` are values. FR, CZ and LU require the whole code. GB (also GG, IM, JE) and IE were added to make this meaningful.
 
 4. **An `outcode()` function, with `district()` as an alias** -- done (`088350c`). Returns the area part as a complete postal_code (`GB-SW1A 1AA` -> `GB-SW1A`; a ZIP+4 -> its ZIP5; Eircode -> routing key). NULL for formats with no distinct outcode and for the end-of-country bound. `IMMUTABLE`, so `CREATE INDEX ON t (outcode(pc))` works.
 
-5. **`upper_bound()` returns a valid postcode where possible; otherwise explore the repercussions** -- done (`b90f9b7`). `upper_bound('GB-LS24')` is the smallest valid value past everything starting with it. At the top of a country there is none, and a range's own "no upper end" would run on into the *next* country, so the bound there is the **end-of-country bound `CC-~`**: a value that sorts after every real postcode of its country and before the next, accepted and shown as text, but not a postcode (`is_valid` rejects it). It is a bound only. Also delivered: `lower_bound()`, the native range type `postal_code_range`, and `postal_prefix()`.
+5. **`upper_bound()` returns a valid postcode where possible; otherwise explore the repercussions** -- done (`b90f9b7`). `upper_bound('GB-LS24')` is the smallest valid value past everything starting with it. At the top of a country there is none, and a range's own "no upper end" would run on into the *next* country, so the bound there is the **end-of-country bound `CC-~`**: a value that sorts after every real postcode of its country and before the next, accepted and shown as text, but not a postcode (`is_valid_postal_code` rejects it). It is a bound only. Also delivered: `lower_bound()`, the native range type `postal_code_range`, and `postal_prefix()`.
 
-6. **Per-country character and numeric restrictions detected at ingest and exposed as `is_valid()`** -- done (`e361848`). Each format enforces its own rules at input (Canada's excluded letters, the UK area table, Eircode's alphabet, US ZIP+4 `0000`, ...). `is_valid(text)` and `is_valid(postcode, cc)` are exactly `to_postal_code(...) IS NOT NULL`.
+6. **Per-country character and numeric restrictions detected at ingest and exposed as `is_valid_postal_code()`** -- done (`e361848`). Each format enforces its own rules at input (Canada's excluded letters, the UK area table, Eircode's alphabet, US ZIP+4 `0000`, ...). `is_valid_postal_code(postcode, cc)` (the country is optional) is exactly `to_postal_code(...) IS NOT NULL`.
 
 ## Added beyond the requirements
 
