@@ -22,8 +22,10 @@ functions, operators and operator classes are unchanged, and stored values are u
 * Country assignments are data (`postal_code_country_formats`, `add_country_format()`,
   `remove_country_format()`), with shipped and user assignments kept apart so that a dump carries yours.
 
-**Compatibility:** PostgreSQL 14 or later. Regression-tested on PostgreSQL 17; `.github/workflows/test.yml`
-runs the suite on 14 to 18.
+**Compatibility:** PostgreSQL 14 or later. The regression suite passes on 14, 15, 16, 17 and 18 (built from
+the release archive); `.github/workflows/test.yml` runs it on all five. One difference: from PostgreSQL 17
+the planner turns `pc <@ postal_prefix(...)` into an index scan; on 14 to 16 it is correct but a filter,
+and `pc % '...'` or `pc >= lower_bound(...) AND pc < upper_bound(...)` is the indexed form (see `README.md`).
 
 **Things to know**
 

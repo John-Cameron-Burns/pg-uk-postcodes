@@ -432,12 +432,14 @@ neighbouring prefixes tile with no gap and no overlap. A fragment is not a value
   append-only, so "the next area" is the next in *encoding* order (`ZE` is followed
   by `GX`) -- the order the values themselves compare in, so tiling still holds.
 
-**Index use.** `pc <@ postal_prefix('GB-LS24')` uses a btree index on `pc`. A call
-with a constant fragment is folded into a constant range at plan time, and
-PostgreSQL's own rewrite of `col <@ <constant range>` into plain btree conditions
-then applies (`pc >= lo AND pc < hi`).
-That rewrite is PostgreSQL 15 and later; on 14 the query is still correct but is a
-filter. `postal_prefix()` is `STABLE` rather than `IMMUTABLE` because the answer
+**Index use.** A call with a constant fragment is folded into a constant range at plan time.
+From PostgreSQL 17, PostgreSQL's own rewrite of `col <@ <constant range>` into plain btree
+conditions (`pc >= lo AND pc < hi`) then applies, so `pc <@ postal_prefix('GB-LS24')` uses a
+btree index on `pc`. **Before 17 (14, 15 and 16) that query is correct but is a filter.** On
+every version, `pc % 'GB-LS24'` and `pc >= lower_bound('GB-LS24') AND pc < upper_bound('GB-LS24')`
+use the index (the latter because a `STABLE` function of a constant is evaluated once), so
+use one of those if you support servers older than 17.
+`postal_prefix()` is `STABLE` rather than `IMMUTABLE` because the answer
 depends on which format a country is assigned, so the folded plan is made to depend
 on `postal_code_country_formats` and a trigger invalidates cached plans whenever
 that table changes -- a reassigned country cannot leave a stale plan behind (this
