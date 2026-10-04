@@ -250,7 +250,7 @@ WHERE is_valid(code, cc) IS DISTINCT FROM (to_postal_code(code, cc) IS NOT NULL)
 -- genuinely new format shape needs real C. See postal_code_country.c
 -- for how postal_code_in()/postal_code(text,text) look this up.
 
-SELECT name FROM postal_code_formats ORDER BY name;
+SELECT name FROM postal_code_formats ORDER BY name COLLATE "C";
 SELECT iso2, format_name FROM postal_code_country_formats
 WHERE iso2 IN ('BR', 'CA', 'CZ', 'FR', 'LU', 'US', 'GB', 'GG', 'IM', 'JE', 'IE') ORDER BY iso2;
 

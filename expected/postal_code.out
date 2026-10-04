@@ -572,7 +572,7 @@ WHERE is_valid(code, cc) IS DISTINCT FROM (to_postal_code(code, cc) IS NOT NULL)
 -- plain INSERT (via add_country_format()), no rebuild -- only a
 -- genuinely new format shape needs real C. See postal_code_country.c
 -- for how postal_code_in()/postal_code(text,text) look this up.
-SELECT name FROM postal_code_formats ORDER BY name;
+SELECT name FROM postal_code_formats ORDER BY name COLLATE "C";
   name   
 ---------
  BR

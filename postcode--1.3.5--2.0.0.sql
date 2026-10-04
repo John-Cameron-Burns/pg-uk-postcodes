@@ -404,7 +404,7 @@ BEGIN
    END IF;
    IF NOT EXISTS (SELECT 1 FROM postal_code_formats WHERE name = format_name) THEN
       RAISE EXCEPTION 'unknown postal_code format %, must be one of: % (or use add_country_template() to define a new one)',
-         format_name, (SELECT string_agg(name, ', ' ORDER BY name) FROM postal_code_formats);
+         format_name, (SELECT string_agg(name, ', ' ORDER BY name COLLATE "C") FROM postal_code_formats);
    END IF;
    IF format_name = 'pattern' AND NOT EXISTS (SELECT 1 FROM postal_code_languages WHERE iso2 = norm_cc) THEN
       RAISE EXCEPTION 'country % has no pattern yet: define one with add_country_template(%, ''...'')', norm_cc, quote_literal(norm_cc);
