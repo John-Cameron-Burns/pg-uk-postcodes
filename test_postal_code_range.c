@@ -186,7 +186,8 @@ int main (void) {
    RANGE_IS("LU", "L-13",   "L-1300", "L-1400");
    RANGE_IS("LU", "13",     "L-1300", "L-1400");
    RANGE_IS("LU", "9",      "L-9000", NULL);
-   NOT_A_FRAGMENT("LU", "L-");
+   RANGE_IS("LU", "L-",     "L-0000", NULL);       // "L-" is text every Luxembourg code starts with: all of them
+   RANGE_IS("LU", "L",      "L-0000", NULL);
 
    // ---- US: a ZIP5 fragment covers the bare ZIP5 and every +4 under it
    RANGE_IS("US", "902",         "90200",      "90300");
