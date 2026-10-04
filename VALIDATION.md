@@ -26,14 +26,14 @@ the Ireland file, French codes in Luxembourg's, Dutch codes in Germany's); those
 | OpenStreetMap postcode areas (`postal_code=*`, the mapped areas) | **99.42%** of 1.18 million |
 | GeoNames | 1,826,904 codes in 121 countries: all load except 21 French non-codes, one American Samoa ZIP filed under Samoa and the UK's `W1M` (not a Royal Mail outcode) |
 | Companies House non-UK registered offices | **94.2%** of 24,244 parse; the rest are PO boxes, placeholders and text around a code |
-| Round trip through text, 1,978,596 distinct parsed codes | 0 failures |
+| Round trip through text, 1,981,791 distinct parsed codes | 0 failures |
 | Round trip through `COPY ... (FORMAT binary)` | 0 lost, 0 invented |
 | Country of the value equals the country it was parsed for | 0 mismatches |
 | `outcode()` idempotent, and never after its value | 0 failures |
 | `is_valid()` agrees with `to_postal_code()` | 0 disagreements |
 | Type order equals text order, within each country | 0 out of order (one documented exception, below) |
-| Prefix ranges: 694,144 distinct prefixes of those codes, `postal_prefix` count against a plain text count | **0 mismatches**, 0 fragments refused |
-| `1.3.5 -> 2.0.0` upgrade of a database holding 829,216 UK postcodes | identical checksums before and after, same partial-match results, and the same 143 extension objects as a fresh 2.0.0 install |
+| Prefix ranges: 698,618 distinct prefixes of those codes, `postal_prefix` count against a plain text count | **0 mismatches**, 0 fragments refused |
+| `1.3.5 -> 2.0.0` upgrade of a database holding 829,216 UK postcodes | identical checksums before and after, same partial-match results, and the same 145 extension objects as a fresh 2.0.0 install; 16 of the 829,216 break Royal Mail's letter rules (e.g. `BT47 5MR`) and are refused by `postal_code` |
 | `pg_dump` and `pg_restore` of that database (829,216 codes in each of the two types) | both tables reproduced exactly, by plain restore and by the reordered restore list |
 | Countries recorded as having no postal codes | checked against OpenStreetMap: their values are placeholders (`00000`), dialling codes (`+218`) and `BP` box numbers, with no consistent format |
 
