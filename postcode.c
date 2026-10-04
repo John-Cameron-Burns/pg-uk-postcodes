@@ -1,5 +1,7 @@
 #include <postgres.h>
-#include <varatt.h>
+#if PG_VERSION_NUM >= 160000
+#include <varatt.h>      // split out of postgres.h in PostgreSQL 16
+#endif
 #include <utils/builtins.h>
 #include <libpq/pqformat.h>
 

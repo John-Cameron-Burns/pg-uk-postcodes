@@ -938,12 +938,24 @@ BEGIN
 END $$;
 SET enable_seqscan = off;
 SET enable_bitmapscan = off;
-SELECT pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc <@ postal_prefix('GB-PH') $q$) AS bounded,
-       pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc <@ postal_prefix('US-99') $q$) AS unbounded_top,
-       pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc <@ postal_prefix('CA-K1C') $q$) AS skipping_unused_letter;
+-- `col <@ <constant range>` becomes btree conditions only from PostgreSQL 17 (the planner's own support for range
+-- containment). Earlier versions give the right rows through a filter instead; there, `%` (tested below, and
+-- indexed on every version) or `pc >= lower_bound(x) AND pc < upper_bound(x)` is the indexed way. So this
+-- reports "index used, wherever the server can".
+SELECT (pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc <@ postal_prefix('GB-PH') $q$) OR current_setting('server_version_num')::int < 170000) AS bounded,
+       (pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc <@ postal_prefix('US-99') $q$) OR current_setting('server_version_num')::int < 170000) AS unbounded_top,
+       (pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc <@ postal_prefix('CA-K1C') $q$) OR current_setting('server_version_num')::int < 170000) AS skipping_unused_letter;
  bounded | unbounded_top | skipping_unused_letter 
 ---------+---------------+------------------------
  t       | t             | t
+(1 row)
+
+-- the explicit-bounds form is indexed on every version (STABLE functions of constants are evaluated once)
+SELECT pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc >= lower_bound('GB-PH') AND pc < upper_bound('GB-PH') $q$) AS explicit_bounds,
+       pg_temp.uses_index_cond($q$ SELECT * FROM addr WHERE pc >= lower_bound('CA-K1C') AND pc < upper_bound('CA-K1C') $q$) AS explicit_bounds_ca;
+ explicit_bounds | explicit_bounds_ca 
+-----------------+--------------------
+ t               | t
 (1 row)
 
 RESET enable_seqscan;
@@ -1621,7 +1633,7 @@ SELECT count(*) AS by_text  FROM zips WHERE pc::text LIKE 'XD-96000-0%';
 (1 row)
 
 SET enable_seqscan = off;
-EXPLAIN (COSTS OFF) SELECT * FROM zips WHERE pc <@ postal_prefix('XD-9812');
+EXPLAIN (COSTS OFF) SELECT * FROM zips WHERE pc % 'XD-9812';
                                      QUERY PLAN                                     
 ------------------------------------------------------------------------------------
  Index Scan using zips_pc_idx on zips
@@ -1886,7 +1898,7 @@ FROM (VALUES
    ('US', '89146'),
    ('VG', 'NOT APPLICABLE'),
    ('VG', 'VG1110')
-) v(cc, code) ORDER BY cc, code;
+) v(cc, code) ORDER BY cc, code COLLATE "C";
  cc |      code      |   parsed    
 ----+----------------+-------------
  AT | 1010           | AT-1010
@@ -2124,43 +2136,43 @@ SELECT iso2, format, basis, left(note, 50) AS note FROM postal_code_world WHERE 
 -- Real data writes digits in other scripts, Unicode dashes and spaces, Japan's
 -- postal mark, a Brazilian CEP without its hyphen or with dots, a ZIP+4 without
 -- its hyphen. All of them are the same code re-spelled.
-SELECT cc, written, to_postal_code(written, cc) AS parsed
-FROM (VALUES ('IR', '۱۱۴۱۶۱۳۶۷۵'), ('IR', '۱۱۵۱۷-۱۳۵۱۳'), ('MM', '၀၇၀၉၁'), ('BD', '১২১৪'), ('IN', '४००००१'),
-             ('JP', '〒050−0083'), ('JP', '064‐0915'), ('JP', '〒 100–8111'), ('JP', '１００-８１１１'),
-             ('US', '９０２１０'), ('FR', '７５００８'), ('FR', '75008'), ('FR', '​75008'), ('LU', 'L − 2226'),
-             ('BR', '01139020'), ('BR', '06.026-170'), ('BR', '06026170'), ('BR', '01310-100'), ('BR', '0113902'),
-             ('US', '902101234'), ('US', '90210 1234'), ('US', '902100000'), ('US', '90210-1234'),
-             ('CO', '630001-025'), ('CO', '050010210'), ('CO', '630001'), ('MZ', '0101-01'), ('MZ', '0101')) v(cc, written);
- cc |        written         |     parsed     
-----+------------------------+----------------
- IR | ۱۱۴۱۶۱۳۶۷۵   | IR-11416-13675
- IR | ۱۱۵۱۷-۱۳۵۱۳  | IR-11517-13513
- MM | ၀၇၀၉၁        | MM-07091
- BD | ১২১৪           | BD-1214
- IN | ४००००१     | IN-400001
- JP | 〒050−0083          | JP-050-0083
- JP | 064‐0915             | JP-064-0915
- JP | 〒 100–8111         | JP-100-8111
- JP | １００-８１１１ | JP-100-8111
- US | ９０２１０        | US-90210
- FR | ７５００８        | FR-75008
- FR | 75008                  | FR-75008
- FR | ​75008               | FR-75008
- LU | L − 2226             | LU-L-2226
- BR | 01139020               | BR-01139-020
- BR | 06.026-170             | BR-06026-170
- BR | 06026170               | BR-06026-170
- BR | 01310-100              | BR-01310-100
- BR | 0113902                | 
- US | 902101234              | US-90210-1234
- US | 90210 1234             | US-90210-1234
- US | 902100000              | 
- US | 90210-1234             | US-90210-1234
- CO | 630001-025             | CO-630001-025
- CO | 050010210              | CO-050010-210
- CO | 630001                 | CO-630001
- MZ | 0101-01                | MZ-0101-01
- MZ | 0101                   | MZ-0101
+SELECT cc, what, to_postal_code(written, cc) AS parsed
+FROM (VALUES ('IR', 'Persian digits', '۱۱۴۱۶۱۳۶۷۵'), ('IR', 'Persian digits and hyphen', '۱۱۵۱۷-۱۳۵۱۳'), ('MM', 'Burmese digits', '၀၇၀၉၁'), ('BD', 'Bengali digits', '১২১৪'), ('IN', 'Devanagari digits', '४००००१'),
+             ('JP', 'postal mark and U+2212 minus', '〒050−0083'), ('JP', 'U+2010 hyphen', '064‐0915'), ('JP', 'postal mark, space and en dash', '〒 100–8111'), ('JP', 'full-width digits', '１００-８１１１'),
+             ('US', 'full-width digits', '９０２１０'), ('FR', 'full-width digits', '７５００８'), ('FR', 'ASCII', '75008'), ('FR', 'zero-width space first', '​75008'), ('LU', 'L, U+2212 minus, 2226', 'L − 2226'),
+             ('BR', 'ASCII', '01139020'), ('BR', 'ASCII', '06.026-170'), ('BR', 'ASCII', '06026170'), ('BR', 'ASCII', '01310-100'), ('BR', 'ASCII', '0113902'),
+             ('US', 'ASCII', '902101234'), ('US', 'ASCII', '90210 1234'), ('US', 'ASCII', '902100000'), ('US', 'ASCII', '90210-1234'),
+             ('CO', 'ASCII', '630001-025'), ('CO', 'ASCII', '050010210'), ('CO', 'ASCII', '630001'), ('MZ', 'ASCII', '0101-01'), ('MZ', 'ASCII', '0101')) v(cc, what, written);
+ cc |              what              |     parsed     
+----+--------------------------------+----------------
+ IR | Persian digits                 | IR-11416-13675
+ IR | Persian digits and hyphen      | IR-11517-13513
+ MM | Burmese digits                 | MM-07091
+ BD | Bengali digits                 | BD-1214
+ IN | Devanagari digits              | IN-400001
+ JP | postal mark and U+2212 minus   | JP-050-0083
+ JP | U+2010 hyphen                  | JP-064-0915
+ JP | postal mark, space and en dash | JP-100-8111
+ JP | full-width digits              | JP-100-8111
+ US | full-width digits              | US-90210
+ FR | full-width digits              | FR-75008
+ FR | ASCII                          | FR-75008
+ FR | zero-width space first         | FR-75008
+ LU | L, U+2212 minus, 2226          | LU-L-2226
+ BR | ASCII                          | BR-01139-020
+ BR | ASCII                          | BR-06026-170
+ BR | ASCII                          | BR-06026-170
+ BR | ASCII                          | BR-01310-100
+ BR | ASCII                          | 
+ US | ASCII                          | US-90210-1234
+ US | ASCII                          | US-90210-1234
+ US | ASCII                          | 
+ US | ASCII                          | US-90210-1234
+ CO | ASCII                          | CO-630001-025
+ CO | ASCII                          | CO-050010-210
+ CO | ASCII                          | CO-630001
+ MZ | ASCII                          | MZ-0101-01
+ MZ | ASCII                          | MZ-0101
 (28 rows)
 
 SELECT 'ir-۱۱۴۱۶۱۳۶۷۵'::postal_code AS a, 'JP-〒050−0083'::postal_code AS b;
@@ -2170,17 +2182,17 @@ SELECT 'ir-۱۱۴۱۶۱۳۶۷۵'::postal_code AS a, 'JP-〒050−0083'::postal_c
 (1 row)
 
 -- Malta's postcodes are officially ASCII, but are often written with the native letters
-SELECT written, to_postal_code(written, 'MT') AS parsed FROM (VALUES ('ŻTN 3000'), ('MLĦ 2777'), ('żtn 3000'), ('ZTN 3000'), ('ĊSP 1000'), ('ĠRB 1000'), ('ĠRB 100'), ('MLH')) v(written);
-  written  |   parsed    
------------+-------------
- ŻTN 3000 | MT-ZTN 3000
- MLĦ 2777 | MT-MLH 2777
- żtn 3000 | MT-ZTN 3000
- ZTN 3000  | MT-ZTN 3000
- ĊSP 1000 | MT-CSP 1000
- ĠRB 1000 | MT-GRB 1000
- ĠRB 100  | 
- MLH       | MT-MLH
+SELECT what, to_postal_code(written, 'MT') AS parsed FROM (VALUES ('Z-dot', 'ŻTN 3000'), ('H-bar', 'MLĦ 2777'), ('lower-case z-dot', 'żtn 3000'), ('ASCII', 'ZTN 3000'), ('C-dot', 'ĊSP 1000'), ('G-dot', 'ĠRB 1000'), ('3 digits', 'ĠRB 100'), ('outcode only', 'MLH')) v(what, written);
+       what       |   parsed    
+------------------+-------------
+ Z-dot            | MT-ZTN 3000
+ H-bar            | MT-MLH 2777
+ lower-case z-dot | MT-ZTN 3000
+ ASCII            | MT-ZTN 3000
+ C-dot            | MT-CSP 1000
+ G-dot            | MT-GRB 1000
+ 3 digits         | 
+ outcode only     | MT-MLH
 (8 rows)
 
 -- a GB fragment may end part-way through the unit: "M14 6Q" is a prefix of "M14 6QA".."M14 6QZ"
