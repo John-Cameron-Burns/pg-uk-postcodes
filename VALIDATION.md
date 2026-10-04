@@ -1,6 +1,6 @@
 # Validation on real data
 
-`postal_code` was run against about 117 million postcodes from OpenStreetMap, 1.65 million from
+`postal_code` was run against about 117 million postcodes from OpenStreetMap, 1.8 million from
 GeoNames and 24,000 foreign registered offices from Companies House before release. This records what
 was done, what it found, and what is still imperfect. Everything here can be re-run
 (see "Reproducing").
@@ -10,7 +10,7 @@ was done, what it found, and what is still imperfect. Everything here can be re-
 | Data | Size | Source |
 |---|---|---|
 | OpenStreetMap `addr:postcode` and `postal_code` tags | 117,537,690 values, 2,149,363 distinct (country, tag, value), 209 countries | Geofabrik's per-country extracts, 188 files |
-| GeoNames postal codes | 1,648,733 codes, 120 countries | `"@GEONAMES".world` |
+| GeoNames postal codes | 1,826,904 codes, 121 countries (including the UAE's 178,171) | `"@GEONAMES".world` |
 | Companies House non-UK registered offices | 24,244 postcodes, 197 country spellings | `"@COMPANIESHOUSE".ch` |
 | UK postcodes, for the `1.3.5 -> 2.0.0` upgrade | 829,216 distinct codes | the OpenStreetMap GB extract |
 
@@ -24,7 +24,8 @@ the Ireland file, French codes in Luxembourg's, Dutch codes in Germany's); those
 |---|---|
 | OpenStreetMap `addr:postcode` values parsed | **99.84%** of 116.3 million (97.49% of distinct values) |
 | OpenStreetMap postcode areas (`postal_code=*`, the mapped areas) | **99.42%** of 1.18 million |
-| GeoNames | every code in 120 countries loads except 21 French non-codes and one American Samoa ZIP filed under Samoa |
+| GeoNames | 1,826,904 codes in 121 countries: all load except 21 French non-codes and one American Samoa ZIP filed under Samoa |
+| Companies House non-UK registered offices | **94.2%** of 24,244 parse; the rest are PO boxes, placeholders and text around a code |
 | Round trip through text, 1,978,425 distinct parsed codes | 0 failures |
 | Round trip through `COPY ... (FORMAT binary)` | 0 lost, 0 invented |
 | Country of the value equals the country it was parsed for | 0 mismatches |
@@ -88,5 +89,6 @@ tools/world_formats.py    the country -> format table, with where each format ca
 
 `osm_run.py` expects `selected.json` (the country files, from Geofabrik's `index-v1-nogeom.json`) and
 writes one CSV per country; load them into `osm_raw(files, src, ac, value, n)` and run
-`psql -f tools/osm_validate.sql`. About 80 GB is downloaded and discarded; the CSVs are 46 MB. The whole
-script runs in well under an hour on a laptop-sized machine.
+`psql -f tools/osm_validate.sql`. Tens of gigabytes are downloaded and discarded (the US file alone is
+12 GB); the CSVs are 46 MB. In the 12-core test container the download and extraction took about an hour
+and the validation script about fifteen minutes.
