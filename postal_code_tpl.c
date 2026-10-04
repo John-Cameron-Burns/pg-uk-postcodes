@@ -65,7 +65,7 @@ bool pc_template_for_slot (int slot, pc_template *out) {
       if (!pc_template_compile(spec, &t, err, sizeof err))
          ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
                          errmsg("postal_code_templates slot %d holds an invalid template \"%s\": %s", slot, spec, err)));
-      templates_relid = get_relname_relid("postal_code_templates", get_extension_schema(get_extension_oid("postcode", false)));
+      templates_relid = get_relname_relid("postal_code_templates", pc_extension_schema_oid());
       cache[slot].tpl = t;
       cache[slot].valid = true;
       *out = t;

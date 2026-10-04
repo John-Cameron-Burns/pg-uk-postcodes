@@ -2,7 +2,10 @@
 #include <executor/spi.h>
 #include <utils/builtins.h>
 #include <catalog/pg_type.h>
+#include <access/htup_details.h>
+#include <catalog/pg_extension.h>
 #include <commands/extension.h>
+#include <utils/syscache.h>
 #include <utils/lsyscache.h>
 
 #include "postal_code_country.h"
@@ -15,10 +18,18 @@
 // table is meant for day to day).
 static SPIPlanPtr country_format_plan = NULL;
 
-const char *pc_schema_prefix (void) {
+// The extension's schema, read from pg_extension (get_extension_schema() is not available before PostgreSQL 16).
+Oid pc_extension_schema_oid (void) {
    Oid ext = get_extension_oid("postcode", false);
-   Oid nsp = get_extension_schema(ext);
-   return psprintf("%s.", quote_identifier(get_namespace_name(nsp)));
+   HeapTuple tup = SearchSysCache1(EXTENSIONOID, ObjectIdGetDatum(ext));
+   if (!HeapTupleIsValid(tup)) elog(ERROR, "cache lookup failed for extension %u", ext);
+   Oid nsp = ((Form_pg_extension) GETSTRUCT(tup))->extnamespace;
+   ReleaseSysCache(tup);
+   return nsp;
+}
+
+const char *pc_schema_prefix (void) {
+   return psprintf("%s.", quote_identifier(get_namespace_name(pc_extension_schema_oid())));
 }
 
 char *pc_lookup_country_format (const char iso2[2], int *slot) {

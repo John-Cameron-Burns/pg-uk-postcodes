@@ -28,4 +28,7 @@ char *pc_lookup_country_format (const char iso2[2], int *slot);
 // functions run during a restore, before anything else is in place.
 const char *pc_schema_prefix (void);
 
+// ... and its OID.
+Oid pc_extension_schema_oid (void);
+
 #endif
