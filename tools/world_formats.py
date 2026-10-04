@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The country -> postal code format table for the whole world.
 
-Source of truth for the built-in assignments in postcode--1.3.5--2.0.0.sql
+Source of truth for the built-in assignments in postcode--1.3.5--2.0.1.sql
 (run `python3 tools/splice.py` to regenerate the INSERTs).
 
 Each entry: ISO 3166-1 alpha-2 -> (spec, basis)

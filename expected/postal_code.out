@@ -525,43 +525,52 @@ ORDER BY oprname;
  >=      | scalargesel | scalargejoinsel
 (6 rows)
 
--- is_valid(): true/false instead of an error, e.g. for CHECK constraints
+-- is_valid_postal_code(): true/false instead of an error, e.g. for CHECK constraints
 -- or for finding the rejects in a staging table. NULL in gives NULL out.
-SELECT is_valid('US-90210-1234') AS zip4,
-       is_valid('GB-SW1A') AS outcode,
-       is_valid('FR-75054 CEDEX 01') AS cedex,
-       is_valid('FR-78078 CITYSSIMO') AS brand,
-       is_valid('CA-D1A 0B1') AS excluded_canadian_letter,
-       is_valid('IE-B65') AS bad_eircode_letter,
-       is_valid('US-90210-0000') AS zip4_0000,
-       is_valid('90210') AS no_country,
-       is_valid('ZZ-90210') AS unassigned_country,
-       is_valid('GB-SW1A 1') AS fragment,
-       is_valid(NULL::text) AS null_in;
+SELECT is_valid_postal_code('US-90210-1234') AS zip4,
+       is_valid_postal_code('GB-SW1A') AS outcode,
+       is_valid_postal_code('FR-75054 CEDEX 01') AS cedex,
+       is_valid_postal_code('FR-78078 CITYSSIMO') AS brand,
+       is_valid_postal_code('CA-D1A 0B1') AS excluded_canadian_letter,
+       is_valid_postal_code('IE-B65') AS bad_eircode_letter,
+       is_valid_postal_code('US-90210-0000') AS zip4_0000,
+       is_valid_postal_code('90210') AS no_country,
+       is_valid_postal_code('ZZ-90210') AS unassigned_country,
+       is_valid_postal_code('GB-SW1A 1') AS fragment,
+       is_valid_postal_code(NULL::text) AS null_in;
  zip4 | outcode | cedex | brand | excluded_canadian_letter | bad_eircode_letter | zip4_0000 | no_country | unassigned_country | fragment | null_in 
 ------+---------+-------+-------+--------------------------+--------------------+-----------+------------+--------------------+----------+---------
  t    | t       | t     | f     | f                        | f                  | f         | f          | f                  | f        | 
 (1 row)
 
-SELECT is_valid('90210', 'US') AS good, is_valid('nonsense', 'US') AS bad, is_valid('1', 'xx') AS unassigned;
+SELECT is_valid_postal_code('90210', 'US') AS good, is_valid_postal_code('nonsense', 'US') AS bad, is_valid_postal_code('1', 'xx') AS unassigned;
  good | bad | unassigned 
 ------+-----+------------
  t    | f   | f
 (1 row)
 
-SELECT is_valid('US-90210', 'CA') AS mismatch, is_valid('90210', NULL) AS no_country,
-       is_valid('US-90210', NULL) AS prefix_only, is_valid('US-90210', 'US') AS both_agree,
-       is_valid(NULL, 'US') AS null_postcode;
+SELECT is_valid_postal_code('US-90210', 'CA') AS mismatch, is_valid_postal_code('90210', NULL) AS no_country,
+       is_valid_postal_code('US-90210', NULL) AS prefix_only, is_valid_postal_code('US-90210', 'US') AS both_agree,
+       is_valid_postal_code(NULL, 'US') AS null_postcode;
  mismatch | no_country | prefix_only | both_agree | null_postcode 
 ----------+------------+-------------+------------+---------------
  f        | f          | t           | t          | 
+(1 row)
+
+-- one function for both forms: the country is optional, and a bare name like is_valid() is not used (it collided
+-- with other extensions' is_valid in 2.0.0)
+SELECT is_valid_postal_code('US-90210') IS NOT DISTINCT FROM is_valid_postal_code('US-90210', NULL) AS country_is_optional,
+       to_regprocedure('is_valid(text)') IS NULL AND to_regprocedure('is_valid(text, text)') IS NULL AS no_bare_is_valid;
+ country_is_optional | no_bare_is_valid 
+---------------------+------------------
+ t                   | t
 (1 row)
 
 -- agrees with the strict parser on every row of the fixture, good or bad
 SELECT count(*) AS disagreements FROM (VALUES
    ('US','90210'),('CA','T0A'),('GB','SW1A'),('IE','D6W'),('FR','75054 CEDEX 01'),
    ('FR','CITYSSIMO'),('CA','D1A 0B1'),('US','1234'),('LU','1311'),('BR','08970-000'),('CZ','11000')) v(cc, code)
-WHERE is_valid(code, cc) IS DISTINCT FROM (to_postal_code(code, cc) IS NOT NULL);
+WHERE is_valid_postal_code(code, cc) IS DISTINCT FROM (to_postal_code(code, cc) IS NOT NULL);
  disagreements 
 ---------------
              0
@@ -813,7 +822,7 @@ SELECT 'US-99999'::postal_code < 'US-~'::postal_code AS after_the_last_us_code,
 (1 row)
 
 -- ... but it is not a postcode: nothing validates, parses or constructs it
-SELECT is_valid('US-~') AS is_valid, to_postal_code('US-~') IS NULL AS to_postal_code_is_null;
+SELECT is_valid_postal_code('US-~') AS is_valid, to_postal_code('US-~') IS NULL AS to_postal_code_is_null;
  is_valid | to_postal_code_is_null 
 ----------+------------------------
  f        | t
@@ -1264,7 +1273,7 @@ ERROR:  "ZZ" is not a supported country code
 LINE 1: INSERT INTO nowhere VALUES ('ZZ-12345');
                                     ^
 HINT:  see postal_code_country_formats, or add one with add_country_format()
-SELECT is_valid('12345', 'ZZ') AS can_anything_be_valid_there;
+SELECT is_valid_postal_code('12345', 'ZZ') AS can_anything_be_valid_there;
  can_anything_be_valid_there 
 -----------------------------
  f
@@ -1480,7 +1489,7 @@ SELECT 'XD-98000-'::postal_code;
 ERROR:  cannot parse "98000-" as a XD postal code
 LINE 1: SELECT 'XD-98000-'::postal_code;
                ^
-SELECT to_postal_code('XA-00-9500') AS null_not_error, is_valid('XA-00-950') AS yes, is_valid('XA-00-95') AS no;
+SELECT to_postal_code('XA-00-9500') AS null_not_error, is_valid_postal_code('XA-00-950') AS yes, is_valid_postal_code('XA-00-95') AS no;
  null_not_error | yes | no 
 ----------------+-----+----
                 | t   | f
@@ -1835,7 +1844,7 @@ SELECT 'XK-1234 A'::postal_code;
 ERROR:  cannot parse "1234 A" as a XK postal code
 LINE 1: SELECT 'XK-1234 A'::postal_code;
                ^
-SELECT to_postal_code('XK-1234 IO') AS null_not_error, is_valid('1234 AB', 'XK') AS yes, is_valid('1234 AI', 'XK') AS no;
+SELECT to_postal_code('XK-1234 IO') AS null_not_error, is_valid_postal_code('1234 AB', 'XK') AS yes, is_valid_postal_code('1234 AI', 'XK') AS no;
  null_not_error | yes | no 
 ----------------+-----+----
                 | t   | f
@@ -1942,7 +1951,7 @@ SELECT 'XG-XG'::postal_code;
 ERROR:  cannot parse "XG" as a XG postal code
 LINE 1: SELECT 'XG-XG'::postal_code;
                ^
-SELECT to_postal_code('XG-AB1110') AS null_not_error, is_valid('XG1110', 'XG') AS yes, is_valid('AB1110', 'XG') AS no;
+SELECT to_postal_code('XG-AB1110') AS null_not_error, is_valid_postal_code('XG1110', 'XG') AS yes, is_valid_postal_code('AB1110', 'XG') AS no;
  null_not_error | yes | no 
 ----------------+-----+----
                 | t   | f

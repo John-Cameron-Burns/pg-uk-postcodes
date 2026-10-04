@@ -57,7 +57,7 @@ typedef enum {
 // has no successor value, and a range's own "no upper end" would not do: that
 // means the end of the WHOLE value space, so [BR-99000,) would run on through
 // CA, CZ, ... US. It is a bound only, never a postcode: payload is always 0, no
-// encoder will parse or produce it, and is_valid()/to_postal_code() reject it.
+// encoder will parse or produce it, and is_valid_postal_code()/to_postal_code() reject it.
 #define PC_FMT_END ((1u << PC_FORMAT_BITS) - 1)
 
 // Implemented once per format (postal_code_us.c, postal_code_ca.c,

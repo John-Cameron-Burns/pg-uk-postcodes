@@ -228,7 +228,7 @@ valid is the in-between: `GB-SW1A 1` (a sector with no unit) is a fragment.
 
 A prefix is exactly two letters then a hyphen, which no national format starts
 with (Luxembourg's `L-1311` has one letter), so there is no ambiguity. A NULL
-postcode gives NULL. `to_postal_code(postcode, cc)` and `is_valid(postcode, cc)` follow
+postcode gives NULL. `to_postal_code(postcode, cc)` and `is_valid_postal_code(postcode, cc)` follow
 the same rules, giving NULL / false where the strict form would raise.
 
 Countries sort in ISO 3166-1 alpha-2 **text** order unconditionally (`'CA-...'`
@@ -298,16 +298,17 @@ afterwards. It comes in the same two forms as the strict constructors:
     INSERT INTO addresses (pc) SELECT to_postal_code(code, country) FROM staging;
     SELECT * FROM staging WHERE to_postal_code(code, country) IS NULL;
 
-`is_valid()` answers the same question as a boolean, in the same two forms, for
+`is_valid_postal_code()` answers the same question as a boolean, in the same two forms (the country is
+optional), for
 `CHECK` constraints or for finding the rejects in a staging table (NULL in gives
 NULL out, so a `CHECK` lets NULLs through):
 
-    SELECT is_valid('CA-D1A 0B1');                   -- false: D is never used in a Canadian code
-    ALTER TABLE staging ADD CHECK (is_valid(code, country));
+    SELECT is_valid_postal_code('CA-D1A 0B1');        -- false: D is never used in a Canadian code
+    ALTER TABLE staging ADD CHECK (is_valid_postal_code(code, country));
 
 It is exactly `to_postal_code(...) IS NOT NULL`, so every per-country rule
 (Canadian excluded letters, Eircode's alphabet, ZIP+4 `0000`, ...) is enforced
-by the same parser at ingest and in `is_valid()` -- they cannot disagree.
+by the same parser at ingest and in `is_valid_postal_code()` -- they cannot disagree.
 
 **What counts as the same code.** Real data spells one code several ways, so some
 differences of spelling are not errors. Anything a format accepts as written is taken
@@ -424,7 +425,7 @@ neighbouring prefixes tile with no gap and no overlap. A fragment is not a value
 * Bounds are bounds, not addresses. A bound that is the successor of a prefix need
   not be a code anyone has, and using one as a postcode is bad practice. `US-~` is
   accepted as input so a stored range survives a dump and restore, but nothing treats
-  it as a postcode: `is_valid('US-~')` is false and `to_postal_code('US-~')` is NULL.
+  it as a postcode: `is_valid_postal_code('US-~')` is false and `to_postal_code('US-~')` is NULL.
   (`'US-'` with nothing after the hyphen is still an error, so an empty code in a
   concatenation cannot quietly become one.)
 * The UK rule is kept: `GB-LS1` is district LS1 only, not LS1x (all available
@@ -539,7 +540,7 @@ configure: ordering is text ordering (`'PL-00-949' < 'PL-00-950'`, countries in 
 validity is exact, no bits are wasted (a pattern with 3 billion codes needs 32), and
 prefix ranges are exact: `lower_bound`/`upper_bound`/`postal_prefix` return real codes,
 never a string the pattern would reject. `%` and index use, `outcode()`,
-`is_valid()`/`to_postal_code()`, the country lock and binary send/receive all work.
+`is_valid_postal_code()`/`to_postal_code()`, the country lock and binary send/receive all work.
 Separators (a space or hyphen the pattern has) may be left out of the input and are put
 back, and letters are accepted in either case.
 

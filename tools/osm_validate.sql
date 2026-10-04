@@ -12,7 +12,7 @@
 --   1. parse rate, overall and per country, for addr:postcode tags and for postal_code boundaries
 --      (the latter are mapped postcode areas, so they are the more reliable values);
 --   2. every parsed value round-trips through text, through COPY ... (FORMAT binary), and is
---      idempotent under outcode(); is_valid() agrees with to_postal_code();
+--      idempotent under outcode(); is_valid_postal_code() agrees with to_postal_code();
 --   3. sort order of the type matches text order within each country (GB sorts by its area table,
 --      so it is reported separately);
 --   4. prefix ranges: every distinct prefix of every parsed value counted by postal_prefix()
@@ -77,7 +77,7 @@ SELECT count(*) AS distinct_codes,
        count(*) FILTER (WHERE country(pc) <> cc) AS country_mismatch,
        count(*) FILTER (WHERE outcode(outcode(pc)) IS DISTINCT FROM outcode(pc)) AS outcode_not_idempotent,
        count(*) FILTER (WHERE outcode(pc) IS NOT NULL AND NOT (outcode(pc) <= pc)) AS outcode_after_value,
-       count(*) FILTER (WHERE NOT is_valid(pc::text)) AS is_valid_disagrees
+       count(*) FILTER (WHERE NOT is_valid_postal_code(pc::text)) AS is_valid_disagrees
 FROM parsed;
 COPY (SELECT pc FROM parsed) TO '/tmp/osm_pc.bin' (FORMAT binary);
 DROP TABLE IF EXISTS osm_back; CREATE TEMP TABLE osm_back (pc postal_code);
