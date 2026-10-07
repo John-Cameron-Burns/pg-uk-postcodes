@@ -1,10 +1,24 @@
-Postcode 1.3
-============
-UK postcode encoded in 32 bits and optimised for indexing and partial matches
+postcode 2.0.1
+==============
+Two PostgreSQL types for postal codes, both compact, validated and optimised for B-tree
+indexing and prefix (district) matching:
+
+* **`postcode`** -- a UK postcode encoded in 32 bits, with `dps` for delivery point suffixes.
+* **`postal_code`** (new in 2.0) -- a 64-bit type for the postal codes of any country, written
+  `CC-code` as the UPU recommends (`US-90210`, `GB-SW1A 1AA`). It has formats for the 194 ISO 3166-1
+  countries and territories that have postal codes; a new country needs SQL, not C. See
+  [postal_code: any country](#postal_code-any-country-not-just-the-uk).
+
+Requires PostgreSQL 14 or later (the regression suite runs on 14 to 18). Install with
+`make && make install`, then `CREATE EXTENSION postcode;`. Upgrading from 1.3.x is
+`ALTER EXTENSION postcode UPDATE;` -- the existing types are unchanged. Licence: BSD
+(see `LICENSE`). What changed in each release is in `CHANGELOG.md`.
+
+The sections below up to "postal_code: any country" describe the UK `postcode` type.
 
 
-Coverage
---------
+UK postcode coverage
+--------------------
 Supports all 127 postcode areas. The crown dependencies GY, JE and IM and
 Gibraltar's GX area are
 included plus two non-geographic areas BX and BF.
@@ -244,7 +258,7 @@ It is invisible within a country (Gibraltar is `GI`, whose only area is `GX`), b
 `GB-GX..` value would sort after every `GB-ZE..`. For the same reason a bare area
 letter (`GB-A`) is not a fragment: the areas starting with it are not contiguous.
 
-Formats implemented so far:
+The compiled formats (the other countries use patterns -- see "Every country in the world" below):
 
   * **US** -- 5-digit ZIP, with an optional `-NNNN` ZIP+4 add-on.
   * **CA** -- `ANA NAN` (e.g. `K1A 0B1`). The bare 3-character forward
@@ -489,7 +503,7 @@ The extension ships with a format for every country and territory that has a pos
 code system: 194 of the 250 ISO 3166-1 entries (the other 56 have no postal codes,
 and the table says so). Eight formats are compiled (US, CA, FR, BR, CZ, LU, GB, IE);
 the rest are patterns (below). The formats come from the real GeoNames data
-(`"@GEONAMES".world`, 120 countries and 1.65 million codes, every one of which loads
+(`"@GEONAMES".world`, 121 countries and 1.83 million codes, every one of which loads
 except 21 French non-codes, one American Samoa ZIP filed under Samoa and the UK's `W1M`) and, for countries it doesn't cover, Wikipedia's list of
 postal codes. Territories that use another country's system share its format
 (`PR`, `GU`, `VI`... use the US one, `RE`, `GP`, `MQ`... the French).
@@ -628,12 +642,15 @@ it found and the gaps that remain.
 
 Credits
 -------
-Developed up to 1.3.0 by Dave Green at patchsoft.
-Taken up for bug fixing and gap filing by John Burn of Impact Data Metrics. The bulk of the code is from David Green.
+The UK postcode design and original code (the `postcode` and `dps` types) are by Dave Green at patchsoft,
+developed up to 1.3.0.
+PGXN could not reach Dave Green, so David Wheeler of PGXN made John Burns of Impact Data Metrics a
+co-owner of the distribution, which lets him make releases; Dave Green remains the primary owner. John took
+it up for bug fixing and gap filing and added the international `postal_code` type in 2.0.
 Claude AI was used to analyse and apply code fixes and generate tests
 
 Bugs
 ----
-Regression tests are provided using pg_regress via the installcheck target. Please raise issues on the githib site or PGXN
+Regression tests are provided using pg_regress via the installcheck target. Please raise issues on the GitHub site or PGXN
 
 
