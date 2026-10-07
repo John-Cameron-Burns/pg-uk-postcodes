@@ -44,7 +44,7 @@
       },
       "x_original": {
          "web": "https://github.com/patchsoft/postcode",
-         "note": "This is a maintained fork of patchsoft/postcode -- see description."
+         "note": "The UK postcode design and original code are by Dave Green (patchsoft). PGXN could not contact him, so David Wheeler of PGXN made John Burns co-owner of the distribution, which allows him to make releases; Dave Green remains the primary owner. John Burns maintains it and added postal_code in 2.0. A maintained fork of patchsoft/postcode -- see description."
       }
    },
    "generated_by": "John Burns",
