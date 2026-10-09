@@ -507,6 +507,44 @@ static bool count_states (int s, int ns, const int16_t *next, const uint8_t *acc
    return true;
 }
 
+// ---- the tables of a compiled pattern ----------------------------------------------------------------------------
+// Whatever built the automaton -- a regular expression or a list of codes -- the result is the same set of tables:
+// the transitions, which states accept, how many codes complete from each state, and how many codes lie behind the
+// characters smaller than each one (what turns a path through the automaton into a rank). State 0 is the start.
+static pc_pattern *pc_assemble (int ns, const int16_t *next, const uint8_t *acc, const uint64_t *cnt, int maxlen, pc_alloc_fn alloc) {
+   // one piece: header, then the arrays largest-alignment first
+   size_t nb = (size_t) ns * (NCH + 1) * sizeof(uint64_t);
+   size_t nc = (size_t) ns * sizeof(uint64_t);
+   size_t nn = (size_t) ns * NCH * sizeof(int16_t);
+   size_t na = (size_t) ns;
+   size_t total = sizeof(pc_pattern) + nb + nc + nn + na + 16;
+   char *blk = alloc(total);
+   if (!blk) return NULL;
+   pc_pattern *p = (pc_pattern *) blk;
+   char *q = blk + ((sizeof(pc_pattern) + 7) & ~(size_t) 7);
+   p->before = (uint64_t *) q; q += nb;
+   p->count  = (uint64_t *) q; q += nc;
+   p->next   = (int16_t *) q;  q += nn;
+   p->accept = (uint8_t *) q;
+   p->nstates = ns;
+   p->maxlen = maxlen;
+   p->total = cnt[0];
+   p->has_outcode = false;
+   memcpy(p->next, next, nn);
+   memcpy(p->accept, acc, na);
+   memcpy(p->count, cnt, nc);
+   for (int s = 0; s < ns; s++) {
+      uint64_t run = 0;
+      for (int c = 0; c < NCH; c++) {
+         p->before[(size_t) s * (NCH + 1) + c] = run;
+         int t = p->next[(size_t) s * NCH + c];
+         if (t >= 0) { run += cnt[t]; if (acc[s]) p->has_outcode = true; }
+      }
+      p->before[(size_t) s * (NCH + 1) + NCH] = run;
+   }
+   return p;
+}
+
 pc_pattern *pc_pattern_compile (const char *regex, pc_alloc_fn alloc, char *err, size_t errlen) {
    parser ps;
    memset(&ps, 0, sizeof ps);
@@ -615,41 +653,195 @@ pc_pattern *pc_pattern_compile (const char *regex, pc_alloc_fn alloc, char *err,
    free(longest); free(done_l);
    if (maxlen > PC_PAT_MAX_LEN) { fail(err, errlen, "a code may be at most %d characters long; this pattern allows %d", PC_PAT_MAX_LEN, maxlen); goto done; }
 
-   // assemble the result in one piece: header, then the arrays largest-alignment first
-   size_t nb = (size_t) ns * (NCH + 1) * sizeof(uint64_t);
-   size_t nc = (size_t) ns * sizeof(uint64_t);
-   size_t nn = (size_t) ns * NCH * sizeof(int16_t);
-   size_t na = (size_t) ns;
-   size_t total = sizeof(pc_pattern) + nb + nc + nn + na + 16;
-   char *blk = alloc(total);
-   if (!blk) { fail(err, errlen, "out of memory"); goto done; }
-   pc_pattern *p = (pc_pattern *) blk;
-   char *q = blk + ((sizeof(pc_pattern) + 7) & ~(size_t) 7);
-   p->before = (uint64_t *) q; q += nb;
-   p->count  = (uint64_t *) q; q += nc;
-   p->next   = (int16_t *) q;  q += nn;
-   p->accept = (uint8_t *) q;
-   p->nstates = ns;
-   p->maxlen = maxlen;
-   p->total = cnt[0];
-   p->has_outcode = false;
-   memcpy(p->next, next, nn);
-   memcpy(p->accept, acc, na);
-   memcpy(p->count, cnt, nc);
-   for (int s = 0; s < ns; s++) {
-      uint64_t run = 0;
-      for (int c = 0; c < NCH; c++) {
-         p->before[(size_t) s * (NCH + 1) + c] = run;
-         int t = p->next[(size_t) s * NCH + c];
-         if (t >= 0) { run += cnt[t]; if (acc[s]) p->has_outcode = true; }
-      }
-      p->before[(size_t) s * (NCH + 1) + NCH] = run;
-   }
+   pc_pattern *p = pc_assemble(ns, next, acc, cnt, maxlen, alloc);
+   if (!p) { fail(err, errlen, "out of memory"); goto done; }
    result = p;
 
 done:
    free(ps.nodes); free(ps.sets); free(f.st); free(d.pool); free(d.off); free(d.len); free(d.table);
    free(next); free(acc); free(mark); free(cnt); free(stamp); free(stack); free(key); free(tmp);
+   return result;
+}
+
+
+// ---- a pattern from a list of codes ----------------------------------------------------------------------------------
+// The codes are sorted, so those that share their first `depth` characters are consecutive: build() takes such a run,
+// splits it by the next character, builds each part, and gives the state its (accepting?, edges). A state with the same
+// accepting flag and edges as an earlier one IS that state, so the result is the smallest automaton: every distinct
+// set of endings is one state, however many places it is reached from. Post-order, so a state's targets are numbered
+// before it, which is the order the counts are worked out in.
+
+typedef struct {
+   const char *const *codes;
+   uint8_t  *acc;   int *eoff, *ene;                 // per state: accepting, its first edge, how many edges
+   int       ns, caps;
+   uint8_t  *ech;   int *eto;  size_t ne, cape;       // the edges of every state, one after another
+   int      *table; size_t tsize;                     // hash of the states made so far: a state number, or -1
+   bool      failed;
+} lbuild;
+
+static uint32_t lb_hash (bool accept, int nch, const uint8_t *chs, const int *tos) {
+   uint32_t h = accept ? 2166136261u : 16777619u;
+   for (int i = 0; i < nch; i++) { h ^= chs[i]; h *= 16777619u; h ^= (uint32_t) tos[i]; h *= 16777619u; }
+   return h;
+}
+
+static bool lb_same (const lbuild *b, int s, bool accept, int nch, const uint8_t *chs, const int *tos) {
+   if ((b->acc[s] != 0) != accept || b->ene[s] != nch) return false;
+   for (int i = 0; i < nch; i++)
+      if (b->ech[b->eoff[s] + i] != chs[i] || b->eto[b->eoff[s] + i] != tos[i]) return false;
+   return true;
+}
+
+static void lb_rehash (lbuild *b, size_t tsize) {
+   int *t = malloc(sizeof(int) * tsize);
+   if (!t) { b->failed = true; return; }
+   for (size_t i = 0; i < tsize; i++) t[i] = -1;
+   for (int s = 0; s < b->ns; s++) {
+      uint32_t h = lb_hash(b->acc[s], b->ene[s], &b->ech[b->eoff[s]], &b->eto[b->eoff[s]]);
+      size_t at = h % tsize;
+      while (t[at] >= 0) at = (at + 1) % tsize;
+      t[at] = s;
+   }
+   free(b->table);
+   b->table = t; b->tsize = tsize;
+}
+
+static int lb_intern (lbuild *b, bool accept, int nch, const uint8_t *chs, const int *tos) {
+   uint32_t h = lb_hash(accept, nch, chs, tos);
+   size_t at = h % b->tsize;
+   while (b->table[at] >= 0) {
+      if (lb_same(b, b->table[at], accept, nch, chs, tos)) return b->table[at];
+      at = (at + 1) % b->tsize;
+   }
+   if (b->ns >= PC_PAT_LIST_MAX_STATES) { b->failed = true; return 0; }
+   if (b->ns == b->caps) {
+      int cap = b->caps ? b->caps * 2 : 256;
+      uint8_t *a = realloc(b->acc, (size_t) cap); int *o = realloc(b->eoff, sizeof(int) * (size_t) cap); int *n = realloc(b->ene, sizeof(int) * (size_t) cap);
+      if (a) b->acc = a;
+      if (o) b->eoff = o;
+      if (n) b->ene = n;
+      if (!a || !o || !n) { b->failed = true; return 0; }
+      b->caps = cap;
+   }
+   if (b->ne + (size_t) nch > b->cape) {
+      size_t cap = (b->ne + (size_t) nch) * 2 + 256;
+      uint8_t *c = realloc(b->ech, cap); int *t = realloc(b->eto, sizeof(int) * cap);
+      if (c) b->ech = c;
+      if (t) b->eto = t;
+      if (!c || !t) { b->failed = true; return 0; }
+      b->cape = cap;
+   }
+   int s = b->ns++;
+   b->acc[s] = accept;
+   b->eoff[s] = (int) b->ne;
+   b->ene[s] = nch;
+   for (int i = 0; i < nch; i++) { b->ech[b->ne] = chs[i]; b->eto[b->ne] = tos[i]; b->ne++; }
+   if ((size_t) b->ns * 2 > b->tsize) {
+      lb_rehash(b, b->tsize * 2);
+      if (b->failed) return 0;
+   } else
+      b->table[at] = s;
+   return s;
+}
+
+static int lb_build (lbuild *b, size_t lo, size_t hi, int depth) {
+   if (b->failed) return 0;
+   bool accept = false;
+   if (b->codes[lo][depth] == '\0') { accept = true; lo++; }          // the code that ends here is the first of the run
+   uint8_t chs[NCH];
+   int tos[NCH], nch = 0;
+   for (size_t i = lo; i < hi; ) {
+      int c = (unsigned char) b->codes[i][depth];
+      size_t j = i + 1;
+      while (j < hi && (unsigned char) b->codes[j][depth] == c) j++;
+      int to = lb_build(b, i, j, depth + 1);
+      if (b->failed) return 0;
+      chs[nch] = (uint8_t) (c - PC_PAT_FIRST);
+      tos[nch] = to;
+      nch++;
+      i = j;
+   }
+   return lb_intern(b, accept, nch, chs, tos);
+}
+
+static void clip (const char *s, char *out, size_t n) {            // a code for an error message, shortened if need be
+   size_t l = strlen(s);
+   if (l >= n) { memcpy(out, s, n - 4); strcpy(out + n - 4, "..."); }
+   else memcpy(out, s, l + 1);
+}
+
+pc_pattern *pc_pattern_from_list (const char *const *codes, size_t n, pc_alloc_fn alloc, char *err, size_t errlen) {
+   if (n == 0) { fail(err, errlen, "a list needs at least one code"); return NULL; }
+   int maxlen = 0;
+   for (size_t k = 0; k < n; k++) {
+      const char *c = codes[k];
+      size_t len = strlen(c);
+      char a[48], b[48];
+      if (len == 0) { fail(err, errlen, "code %zu is empty", k + 1); return NULL; }
+      if (len > PC_PAT_MAX_LEN) { clip(c, a, sizeof a); fail(err, errlen, "code %zu (%s) is %zu characters; a code may be at most %d", k + 1, a, len, PC_PAT_MAX_LEN); return NULL; }
+      for (size_t i = 0; i < len; i++) {
+         int ch = (unsigned char) c[i];
+         if (ch < PC_PAT_FIRST || ch > 0x7E) { clip(c, a, sizeof a); fail(err, errlen, "code %zu (%s): only printable ASCII characters are allowed", k + 1, a); return NULL; }
+         if (ch >= 'a' && ch <= 'z') { clip(c, a, sizeof a); fail(err, errlen, "code %zu (%s): write letters in upper case (codes are upper case; input is folded before matching)", k + 1, a); return NULL; }
+      }
+      if (k > 0 && strcmp(codes[k - 1], c) >= 0) {
+         clip(codes[k - 1], a, sizeof a); clip(c, b, sizeof b);
+         fail(err, errlen, "code %zu (%s) does not come after code %zu (%s): the list must be sorted in byte order, without duplicates", k + 1, b, k, a);
+         return NULL;
+      }
+      if ((int) len > maxlen) maxlen = (int) len;
+   }
+
+   lbuild b;
+   memset(&b, 0, sizeof b);
+   b.codes = codes;
+   b.tsize = 1024;
+   b.table = malloc(sizeof(int) * b.tsize);
+   if (!b.table) { fail(err, errlen, "out of memory"); return NULL; }
+   for (size_t i = 0; i < b.tsize; i++) b.table[i] = -1;
+
+   pc_pattern *result = NULL;
+   int16_t *next = NULL;
+   uint8_t *acc = NULL;
+   uint64_t *cnt = NULL, *cnt_old = NULL;
+
+   int root = lb_build(&b, 0, n, 0);
+   if (b.failed) {
+      if (b.ns >= PC_PAT_LIST_MAX_STATES) fail(err, errlen, "this list needs more than %d states, the most there is room for", PC_PAT_LIST_MAX_STATES);
+      else fail(err, errlen, "out of memory");
+      goto done;
+   }
+   int ns = b.ns;
+   if (root != ns - 1) { fail(err, errlen, "internal error: the start state is not the last"); goto done; }
+
+   // Children were made before their parents, so renumbering as ns-1-s puts the start state at 0 and every state
+   // before the ones it leads to.
+   next = malloc(sizeof(int16_t) * (size_t) ns * NCH);
+   acc = malloc((size_t) ns);
+   cnt = malloc(sizeof(uint64_t) * (size_t) ns);
+   cnt_old = malloc(sizeof(uint64_t) * (size_t) ns);
+   if (!next || !acc || !cnt || !cnt_old) { fail(err, errlen, "out of memory"); goto done; }
+   for (size_t i = 0; i < (size_t) ns * NCH; i++) next[i] = -1;
+   for (int s = 0; s < ns; s++) {
+      uint64_t total = b.acc[s] ? 1 : 0;
+      for (int e = 0; e < b.ene[s]; e++) {
+         int to = b.eto[b.eoff[s] + e];
+         total += cnt_old[to];
+         next[(size_t) (ns - 1 - s) * NCH + b.ech[b.eoff[s] + e]] = (int16_t) (ns - 1 - to);
+      }
+      cnt_old[s] = total;
+      cnt[ns - 1 - s] = total;
+      acc[ns - 1 - s] = b.acc[s] ? 1 : 0;
+   }
+   if (cnt[0] != (uint64_t) n) { fail(err, errlen, "internal error: the automaton has %llu codes, the list %zu", (unsigned long long) cnt[0], n); goto done; }
+
+   result = pc_assemble(ns, next, acc, cnt, maxlen, alloc);
+   if (!result) fail(err, errlen, "out of memory");
+
+done:
+   free(b.acc); free(b.eoff); free(b.ene); free(b.ech); free(b.eto); free(b.table);
+   free(next); free(acc); free(cnt); free(cnt_old);
    return result;
 }
 

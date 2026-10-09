@@ -70,6 +70,15 @@ bool pc_pattern_resolve (const char *spec, char *regex, size_t regexlen, char *e
 // long-lived memory context in the server); nothing else is kept.
 pc_pattern *pc_pattern_compile (const char *regex, pc_alloc_fn alloc, char *err, size_t errlen);
 
+// The automaton for exactly these codes, built straight from a list: n >= 1 codes, each 1 to PC_PAT_MAX_LEN printable
+// upper case ASCII characters, sorted in byte order (strcmp) and without duplicates -- an error says where a list goes
+// wrong. The result has the same tables pc_pattern_compile gives for a pattern denoting the same codes, so everything
+// here works on it unchanged (parse, render, ranges, outcode, same_codes), but it is the smallest automaton for the list,
+// and there is no pattern text, so no limit on how long the list is except that its automaton must fit in
+// PC_PAT_LIST_MAX_STATES states (the transitions are 16-bit).
+#define PC_PAT_LIST_MAX_STATES 32767
+pc_pattern *pc_pattern_from_list (const char *const *codes, size_t n, pc_alloc_fn alloc, char *err, size_t errlen);
+
 // text -> rank. Letters may be either case. False if the text is not a code.
 bool pc_pattern_parse (const pc_pattern *p, const char *text, uint64_t *rank);
 
