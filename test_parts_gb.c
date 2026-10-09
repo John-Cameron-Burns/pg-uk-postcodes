@@ -2,6 +2,7 @@
 //
 //   enc="postal_code_fmt.c postal_code_us.c postal_code_ca.c postal_code_fr.c postal_code_br.c postal_code_cz.c \
 //        postal_code_lu.c postal_code_gb.c postal_code_ie.c binfmt.c"
+//   (run from the source directory: it reads postcode--2.0.1--2.1.0.sql)
 //   cc -std=c99 -DEXTVERSION=test -o test_parts_gb test_parts_gb.c postal_code_pattern.c $enc && ./test_parts_gb
 //
 // The GB format keeps its code in the 32-bit `postcode` layout, so there is a ground truth for what the parts of a
@@ -21,6 +22,7 @@
 #include "postcode.h"
 #include "postal_code_fmt.h"
 #include "postal_code_pattern.h"
+#include "test_parts_sql.h"
 
 static int failures = 0;
 static long checks = 0;
@@ -28,20 +30,15 @@ static long checks = 0;
 
 static void *xalloc (size_t n) { return malloc(n); }
 
-static int cmp (const void *a, const void *b) { return strcmp(*(const char *const *) a, *(const char *const *) b); }
-
 int main (void) {
    const pc_encoder *gb = pc_formats[PC_FMT_GB];
    size_t na = sizeof areas / sizeof *areas;
 
-   // the pattern: every area the format knows, then a digit and optionally a digit or letter, then the inward code
-   const char **sorted = malloc(sizeof *sorted * na);
-   for (size_t i = 0; i < na; i++) sorted[i] = areas[i];
-   qsort(sorted, na, sizeof *sorted, cmp);
-   static char re[4096];
-   strcpy(re, "(?<area>(?:");
-   for (size_t i = 0; i < na; i++) { if (i) strcat(re, "|"); strcat(re, sorted[i]); }
-   strcat(re, "))(?<district>\\d[A-Z\\d]?)( (?<sector>\\d)(?<walk>[A-Z]{2}))?");
+   // the pattern that ships, from the upgrade script
+   static char re[8192];
+   if (!load_parts_pattern("GB", re, sizeof re)) { printf("cannot read the GB parts pattern from postcode--2.0.1--2.1.0.sql\n"); return 1; }
+   // ... which must name every area the format knows
+   for (size_t i = 0; i < na; i++) { CHECK(strstr(re, areas[i]) != NULL); }
 
    char err[200];
    pc_parts *pp = pc_parts_compile(re, xalloc, err, sizeof err);

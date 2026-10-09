@@ -41,3 +41,4 @@ jobs:
           cc -std=c99 -Wall -Wpedantic -D_POSIX_C_SOURCE=200809L -o test_postal_code_pattern test_postal_code_pattern.c postal_code_pattern.c && ./test_postal_code_pattern
           cc -std=c99 -Wall -Wpedantic -D_POSIX_C_SOURCE=200809L -o test_postal_code_parts test_postal_code_parts.c postal_code_pattern.c && ./test_postal_code_parts
           cc -std=c99 -DEXTVERSION=test -DTRUE=true -DFALSE=false -o test_parts_gb test_parts_gb.c postal_code_pattern.c $enc && ./test_parts_gb
+          cc -std=c99 -DEXTVERSION=test -DTRUE=true -DFALSE=false -o test_parts_compiled test_parts_compiled.c postal_code_pattern.c $enc && ./test_parts_compiled
