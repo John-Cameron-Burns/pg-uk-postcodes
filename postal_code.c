@@ -88,6 +88,10 @@ Datum postal_code_part_end (PG_FUNCTION_ARGS);
 Datum postal_code_parts_json (PG_FUNCTION_ARGS);
 Datum postal_code_pattern_part_names (PG_FUNCTION_ARGS);
 Datum postal_code_same_codes (PG_FUNCTION_ARGS);
+Datum postal_code_list_check (PG_FUNCTION_ARGS);
+Datum postal_code_list_check_parts (PG_FUNCTION_ARGS);
+Datum postal_code_language_denotes_list (PG_FUNCTION_ARGS);
+Datum postal_code_language_denotes_pattern (PG_FUNCTION_ARGS);
 Datum postal_code_parts_check (PG_FUNCTION_ARGS);
 
 // Why a country code failed to resolve, so the strict constructors can
@@ -1210,6 +1214,107 @@ Datum postal_code_same_codes (PG_FUNCTION_ARGS) {
    pc_pattern *b = pc_pattern_compile(rb, palloc, err, sizeof err);
    if (!b) ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid postal code pattern \"%s\": %s", rb, err)));
    PG_RETURN_BOOL(pc_pattern_same_codes(a, b));
+}
+
+
+// ---- schemes defined by a list of codes -------------------------------------------------------------------------------
+// add_country_list() hands these the list as a text[] (already sorted in byte order, by the caller). The automaton for a
+// list is built by pc_pattern_from_list(); loading one that is stored is postal_code_lang.c's job.
+
+// The elements of a text[] as C strings. A NULL element is an error: a list of codes has no gaps.
+static const char **list_codes (ArrayType *arr, size_t *np) {
+   Datum *elems;
+   bool *nulls;
+   int n;
+   deconstruct_array(arr, TEXTOID, -1, false, TYPALIGN_INT, &elems, &nulls, &n);
+   const char **codes = palloc(sizeof(char *) * (size_t) (n ? n : 1));
+   for (int i = 0; i < n; i++) {
+      if (nulls[i])
+         ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("a list of codes cannot contain NULL (item %d)", i + 1)));
+      codes[i] = TextDatumGetCString(elems[i]);
+   }
+   *np = (size_t) n;
+   return codes;
+}
+
+static pc_pattern *list_pattern (const char **codes, size_t n) {
+   char err[300];
+   pc_pattern *p = pc_pattern_from_list(codes, n, palloc, err, sizeof err);
+   if (!p)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid list of postal codes: %s", err)));
+   return p;
+}
+
+// Checks a sorted list and returns how many states its automaton has; an error says where the list goes wrong.
+PG_FUNCTION_INFO_V1(postal_code_list_check);
+
+Datum postal_code_list_check (PG_FUNCTION_ARGS) {
+   size_t n;
+   const char **codes = list_codes(PG_GETARG_ARRAYTYPE_P(0), &n);
+   PG_RETURN_INT32(list_pattern(codes, n)->nstates);
+}
+
+// A list's named parts are a pattern of their own (as for the compiled formats): it must accept every code in the list and
+// split each one a single way. Only the codes in the list matter, so this is checked on them all, not on every code the
+// pattern could denote.
+PG_FUNCTION_INFO_V1(postal_code_list_check_parts);
+
+Datum postal_code_list_check_parts (PG_FUNCTION_ARGS) {
+   size_t n;
+   const char **codes = list_codes(PG_GETARG_ARRAYTYPE_P(0), &n);
+   char *regex = text_to_cstring(PG_GETARG_TEXT_PP(1));
+   char err[200];
+   pc_parts *parts = pc_parts_compile(regex, palloc, err, sizeof err);
+   if (!parts)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid pattern for the parts of a list: %s", err)));
+   if (pc_parts_count(parts) == 0)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("the pattern for the parts of a list names no parts"),
+                      errhint("name them with (?<name>...), e.g. /(?<division>\\d{2})(?<rest>\\d{3})/")));
+   int s[PC_PAT_MAX_NAMES], e[PC_PAT_MAX_NAMES];
+   for (size_t i = 0; i < n; i++) {
+      int m = pc_parts_match(parts, codes[i], s, e);
+      if (m != 1)
+         ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                         errmsg("the code \"%s\" (item %zu) does not fit the pattern for the parts of the list", codes[i], i + 1),
+                         errhint("the pattern must accept every code in the list")));
+      if (pc_parts_ambiguous(parts, codes[i]) == 1)
+         ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                         errmsg("the code \"%s\" (item %zu) can be split into its parts in more than one way", codes[i], i + 1),
+                         errhint("make the parts unambiguous, for example give each one a fixed length")));
+   }
+   PG_RETURN_VOID();
+}
+
+// Whether a country's stored language (a pattern or a list) denotes exactly the codes of a sorted list.
+PG_FUNCTION_INFO_V1(postal_code_language_denotes_list);
+
+Datum postal_code_language_denotes_list (PG_FUNCTION_ARGS) {
+   char *cc = text_to_cstring(PG_GETARG_TEXT_PP(0));
+   int version = PG_GETARG_INT32(1);
+   size_t n;
+   const char **codes = list_codes(PG_GETARG_ARRAYTYPE_P(2), &n);
+   if (strlen(cc) != 2)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("country code must be exactly two letters, got %s", cc)));
+   pc_pattern *fresh = list_pattern(codes, n);                           // built first: looking up the language may use SPI
+   const pc_pattern *cur = pc_language_for(cc, version);
+   PG_RETURN_BOOL(cur != NULL && pc_pattern_same_codes(cur, fresh));
+}
+
+// ... or exactly the codes of a pattern.
+PG_FUNCTION_INFO_V1(postal_code_language_denotes_pattern);
+
+Datum postal_code_language_denotes_pattern (PG_FUNCTION_ARGS) {
+   char *cc = text_to_cstring(PG_GETARG_TEXT_PP(0));
+   int version = PG_GETARG_INT32(1);
+   char *regex = text_to_cstring(PG_GETARG_TEXT_PP(2));
+   char err[200];
+   if (strlen(cc) != 2)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("country code must be exactly two letters, got %s", cc)));
+   pc_pattern *fresh = pc_pattern_compile(regex, palloc, err, sizeof err);
+   if (!fresh)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid postal code pattern \"%s\": %s", regex, err)));
+   const pc_pattern *cur = pc_language_for(cc, version);
+   PG_RETURN_BOOL(cur != NULL && pc_pattern_same_codes(cur, fresh));
 }
 
 // Run when a pattern with named parts is defined. An error if some code could be split into its parts in

@@ -528,16 +528,16 @@ SELECT iso2, version, builtin FROM postal_code_languages WHERE iso2 = 'DK' ORDER
 -- a language still cannot change what it means; only be written another way
 UPDATE postal_code_languages SET pattern = '\d{5}' WHERE iso2 = 'QP' AND version = 1;
 ERROR:  postal_code_languages rows are permanent: stored postal_code values are decoded with them
-HINT:  to change a country's rules, add a new language with add_country_template(); a pattern can only be rewritten in place to one that denotes exactly the same codes, as when naming its parts
+HINT:  to change a country's rules, add a new language with add_country_template() or add_country_list(); a pattern can only be rewritten in place to one that denotes exactly the same codes, as when naming its parts, and a list can only have its parts renamed
 UPDATE postal_code_languages SET pattern = '(?<major>\d{2})-(?<minor>\d{3})(-[A-D])?' WHERE iso2 = 'QP' AND version = 1;
 ERROR:  postal_code_languages rows are permanent: stored postal_code values are decoded with them
-HINT:  to change a country's rules, add a new language with add_country_template(); a pattern can only be rewritten in place to one that denotes exactly the same codes, as when naming its parts
+HINT:  to change a country's rules, add a new language with add_country_template() or add_country_list(); a pattern can only be rewritten in place to one that denotes exactly the same codes, as when naming its parts, and a list can only have its parts renamed
 UPDATE postal_code_languages SET source = 'x' WHERE iso2 = 'QP' AND version = 1;
 ERROR:  postal_code_languages rows are permanent: stored postal_code values are decoded with them
-HINT:  to change a country's rules, add a new language with add_country_template(); a pattern can only be rewritten in place to one that denotes exactly the same codes, as when naming its parts
+HINT:  to change a country's rules, add a new language with add_country_template() or add_country_list(); a pattern can only be rewritten in place to one that denotes exactly the same codes, as when naming its parts, and a list can only have its parts renamed
 DELETE FROM postal_code_languages WHERE iso2 = 'QP';
 ERROR:  postal_code_languages rows are permanent: stored postal_code values are decoded with them
-HINT:  to change a country's rules, add a new language with add_country_template(); a pattern can only be rewritten in place to one that denotes exactly the same codes, as when naming its parts
+HINT:  to change a country's rules, add a new language with add_country_template() or add_country_list(); a pattern can only be rewritten in place to one that denotes exactly the same codes, as when naming its parts, and a list can only have its parts renamed
 UPDATE postal_code_languages SET pattern = '(?<x>\d{2})-(?<y>\d{4})' WHERE iso2 = 'QP' AND version = 2;
 SELECT pattern FROM postal_code_languages WHERE iso2 = 'QP' ORDER BY version;
                       pattern                       

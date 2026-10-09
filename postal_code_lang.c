@@ -23,6 +23,8 @@ static bool           stale = false;
 static bool           callback_registered = false;
 static SPIPlanPtr     lang_plan = NULL;
 static SPIPlanPtr     parts_plan = NULL;
+static SPIPlanPtr     list_plan = NULL;
+static SPIPlanPtr     lparts_plan = NULL;
 
 static void languages_changed (Datum arg, Oid relid) {
    stale = true;                                // emptied at the next lookup, never under a caller's feet
@@ -58,8 +60,11 @@ const pc_pattern *pc_language_for (const char iso2[2], int version) {
 
    if (!lang_plan) {
       Oid argtypes[2] = { TEXTOID, INT4OID };
+      // `kind` comes out of to_jsonb(l) rather than being named, so that this library still works against the tables of
+      // an older version of the extension (which has no such column) in the time between installing it and running
+      // ALTER EXTENSION ... UPDATE: there a language is always a pattern.
       SPIPlanPtr plan = SPI_prepare(
-         psprintf("SELECT pattern FROM %spostal_code_languages WHERE iso2 = $1 AND version = $2", pc_schema_prefix()),
+         psprintf("SELECT to_jsonb(l)->>'kind', l.pattern FROM %spostal_code_languages l WHERE l.iso2 = $1 AND l.version = $2", pc_schema_prefix()),
          2, argtypes);
       if (!plan)
          ereport(ERROR, (errmsg("postal_code: failed to prepare language lookup (SPI error %d)", SPI_result)));
@@ -75,15 +80,46 @@ const pc_pattern *pc_language_for (const char iso2[2], int version) {
 
    pc_pattern *pat = NULL;
    if (SPI_processed > 0) {
-      bool isnull;
-      Datum d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
-      char *regex = TextDatumGetCString(d);
-      char err[200];
-      pat = pc_pattern_compile(regex, ctx_alloc, err, sizeof err);
-      if (!pat)
-         ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
-                         errmsg("postal_code_languages holds an invalid pattern for %s version %d: %s", cc, version, err)));
-      if (ncached == CACHE_SLOTS) { MemoryContextReset(langctx); ncached = 0; npcached = 0; pat = pc_pattern_compile(regex, ctx_alloc, err, sizeof err); }
+      bool kind_null, isnull;
+      Datum kd = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &kind_null);
+      bool is_list = !kind_null && strcmp(TextDatumGetCString(kd), "list") == 0;
+      char err[300];
+      if (is_list) {
+         // a list: the codes, in byte order, straight into the smallest automaton
+         if (!list_plan) {
+            Oid argtypes[2] = { TEXTOID, INT4OID };
+            SPIPlanPtr plan = SPI_prepare(
+               psprintf("SELECT code FROM %spostal_code_list_codes WHERE iso2 = $1 AND version = $2 ORDER BY code", pc_schema_prefix()),
+               2, argtypes);
+            if (!plan || SPI_keepplan(plan) != 0)
+               ereport(ERROR, (errmsg("postal_code: failed to prepare the lookup of a list of codes")));
+            list_plan = plan;
+         }
+         Datum lv[2] = { CStringGetTextDatum(cc), Int32GetDatum(version) };
+         if (SPI_execute_plan(list_plan, lv, NULL, true, 0) != SPI_OK_SELECT)
+            ereport(ERROR, (errmsg("postal_code: the lookup of the list of codes of %s version %d failed", cc, version)));
+         uint64 n = SPI_processed;
+         if (n == 0)
+            ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+                            errmsg("postal_code_list_codes has no codes for %s version %d, which postal_code_languages says is a list", cc, version)));
+         const char **codes = palloc(sizeof(char *) * n);
+         for (uint64 i = 0; i < n; i++)
+            codes[i] = SPI_getvalue(SPI_tuptable->vals[i], SPI_tuptable->tupdesc, 1);
+         pat = pc_pattern_from_list(codes, (size_t) n, ctx_alloc, err, sizeof err);
+         if (!pat)
+            ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+                            errmsg("postal_code_list_codes holds an invalid list for %s version %d: %s", cc, version, err)));
+         if (ncached == CACHE_SLOTS) { MemoryContextReset(langctx); ncached = 0; npcached = 0; pat = pc_pattern_from_list(codes, (size_t) n, ctx_alloc, err, sizeof err); }
+      }
+      else {
+         Datum d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2, &isnull);
+         char *regex = TextDatumGetCString(d);
+         pat = pc_pattern_compile(regex, ctx_alloc, err, sizeof err);
+         if (!pat)
+            ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+                            errmsg("postal_code_languages holds an invalid pattern for %s version %d: %s", cc, version, err)));
+         if (ncached == CACHE_SLOTS) { MemoryContextReset(langctx); ncached = 0; npcached = 0; pat = pc_pattern_compile(regex, ctx_alloc, err, sizeof err); }
+      }
       cache[ncached].iso2[0] = iso2[0];
       cache[ncached].iso2[1] = iso2[1];
       cache[ncached].version = version;
@@ -109,12 +145,14 @@ const pc_parts *pc_parts_for (const char iso2[2], int fmt) {
    if (SPI_connect() != SPI_OK_CONNECT)
       ereport(ERROR, (errmsg("postal_code: SPI_connect failed looking up the parts of format %d", fmt)));
 
-   SPIPlanPtr *planp = is_lang ? &lang_plan : &parts_plan;
+   SPIPlanPtr *planp = is_lang ? &lparts_plan : &parts_plan;
    if (!*planp) {
       Oid langtypes[2] = { TEXTOID, INT4OID };
       Oid fmttypes[1] = { TEXTOID };
+      // a pattern names its parts itself; a list has a pattern of its own just for them (NULL if it has none). As in
+      // pc_language_for, the newer columns are read through to_jsonb(l) so an older table layout still works.
       SPIPlanPtr plan = is_lang
-         ? SPI_prepare(psprintf("SELECT pattern FROM %spostal_code_languages WHERE iso2 = $1 AND version = $2", pc_schema_prefix()), 2, langtypes)
+         ? SPI_prepare(psprintf("SELECT CASE WHEN to_jsonb(l)->>'kind' = 'list' THEN to_jsonb(l)->>'parts_pattern' ELSE l.pattern END FROM %spostal_code_languages l WHERE l.iso2 = $1 AND l.version = $2", pc_schema_prefix()), 2, langtypes)
          : SPI_prepare(psprintf("SELECT pattern FROM %spostal_code_format_parts WHERE format_name = $1", pc_schema_prefix()), 1, fmttypes);
       if (!plan)
          ereport(ERROR, (errmsg("postal_code: failed to prepare parts lookup (SPI error %d)", SPI_result)));
@@ -141,6 +179,7 @@ const pc_parts *pc_parts_for (const char iso2[2], int fmt) {
    if (SPI_processed > 0) {
       bool isnull;
       Datum d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+      if (isnull) { SPI_finish(); return NULL; }                  // a list that names no parts
       char *regex = TextDatumGetCString(d);
       char err[200];
       parts = pc_parts_compile(regex, ctx_alloc, err, sizeof err);

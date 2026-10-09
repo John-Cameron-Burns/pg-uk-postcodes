@@ -1,0 +1,447 @@
+-- Schemes defined by a list of codes: add_country_list(), add_country_list_from(). See LIST_SCHEMES.md.
+-- A list is a language like any other (same ranks, ranges, locks), built straight from the codes.
+\set SHOW_CONTEXT never
+-- a small list, given in no particular order
+SELECT add_country_list('QL', ARRAY['47110', '47190', '47210', '47220', '47300', '01110', '01120', '01130', '47191']);
+ add_country_list 
+------------------
+ 
+(1 row)
+
+SELECT version, kind, source, pattern = '' AS no_pattern FROM postal_code_languages WHERE iso2 = 'QL';
+ version | kind |     source      | no_pattern 
+---------+------+-----------------+------------
+       1 | list | list of 9 codes | t
+(1 row)
+
+SELECT code FROM postal_code_list_codes WHERE iso2 = 'QL' ORDER BY code;
+ code  
+-------
+ 01110
+ 01120
+ 01130
+ 47110
+ 47190
+ 47191
+ 47210
+ 47220
+ 47300
+(9 rows)
+
+SELECT iso2, format_name FROM postal_code_country_formats WHERE iso2 = 'QL';
+ iso2 | format_name 
+------+-------------
+ QL   | pattern
+(1 row)
+
+-- ... which now works as a country's codes
+SELECT 'QL-47110'::postal_code AS code, 'ql-47110'::postal_code = 'QL-47110'::postal_code AS either_case,
+       postal_code('47110', 'QL') AS two_arguments;
+   code   | either_case | two_arguments 
+----------+-------------+---------------
+ QL-47110 | t           | QL-47110
+(1 row)
+
+SELECT is_valid_postal_code('QL-47110') AS listed, is_valid_postal_code('QL-47111') AS not_listed,
+       to_postal_code('QL-99999') IS NULL AS lenient_null;
+ listed | not_listed | lenient_null 
+--------+------------+--------------
+ t      | f          | t
+(1 row)
+
+SELECT 'QL-47111'::postal_code;
+ERROR:  cannot parse "47111" as a QL postal code
+LINE 1: SELECT 'QL-47111'::postal_code;
+               ^
+-- ranked in byte order, so the type sorts as the text does
+SELECT code::text FROM (SELECT 'QL-' || c AS code FROM unnest(ARRAY['47300', '01120', '47110', '01110', '47191']) c) v
+ORDER BY code::postal_code;
+   code   
+----------
+ QL-01110
+ QL-01120
+ QL-47110
+ QL-47191
+ QL-47300
+(5 rows)
+
+-- prefix ranges are exact, whatever is and is not in the list
+SELECT postal_prefix('QL-47') AS division, lower_bound('QL-47'), upper_bound('QL-47');
+    division     | lower_bound | upper_bound 
+-----------------+-------------+-------------
+ [QL-47110,QL-~) | QL-47110    | QL-~
+(1 row)
+
+SELECT postal_prefix('QL-471') AS group_471, lower_bound('QL-471'), upper_bound('QL-471');
+      group_471      | lower_bound | upper_bound 
+---------------------+-------------+-------------
+ [QL-47110,QL-47210) | QL-47110    | QL-47210
+(1 row)
+
+SELECT count(*) AS in_division_47 FROM (SELECT ('QL-' || c)::postal_code AS pc FROM unnest(ARRAY['47110', '47190', '47191', '47210', '01110']) c) v
+WHERE pc <@ postal_prefix('QL-47');
+ in_division_47 
+----------------
+              4
+(1 row)
+
+SELECT outcode('QL-47110') IS NULL AS no_outcode_none_is_a_prefix_of_another;
+ no_outcode_none_is_a_prefix_of_another 
+----------------------------------------
+ t
+(1 row)
+
+-- a column locked to the scheme takes bare codes with postal_code(), and refuses another country's
+CREATE TEMP TABLE firms (id serial, sic postal_code('QL'));
+INSERT INTO firms (sic) VALUES ('QL-47110'), (postal_code('47190', 'QL')), ('QL-01110');
+INSERT INTO firms (sic) VALUES ('US-90210');
+ERROR:  postal code of country "US" does not match the column's country "QL"
+HINT:  the column is declared postal_code('QL')
+INSERT INTO firms (sic) VALUES ('QL-47112');
+ERROR:  cannot parse "47112" as a QL postal code
+LINE 1: INSERT INTO firms (sic) VALUES ('QL-47112');
+                                        ^
+SELECT sic FROM firms ORDER BY sic;
+   sic    
+----------
+ QL-01110
+ QL-47110
+ QL-47190
+(3 rows)
+
+-- the same codes again, in another order, change nothing
+SELECT add_country_list('QL', ARRAY['01130', '01120', '01110', '47191', '47190', '47110', '47210', '47220', '47300']);
+ add_country_list 
+------------------
+ 
+(1 row)
+
+SELECT version FROM postal_code_languages WHERE iso2 = 'QL' ORDER BY version;
+ version 
+---------
+       1
+(1 row)
+
+-- the parts of a list are a pattern of their own (it only splits; the list says which codes there are)
+SELECT add_country_list('QL', ARRAY['47110', '47190', '47210', '47220', '47300', '01110', '01120', '01130', '47191'],
+                        '/(?<division>\d{2})(?<group>\d)(?<class>\d)(?<subclass>\d)/');
+ add_country_list 
+------------------
+ 
+(1 row)
+
+SELECT version, parts_pattern FROM postal_code_languages WHERE iso2 = 'QL' ORDER BY version;
+ version |                       parts_pattern                       
+---------+-----------------------------------------------------------
+       1 | (?<division>\d{2})(?<group>\d)(?<class>\d)(?<subclass>\d)
+(1 row)
+
+SELECT ord, name FROM postal_code_parts WHERE iso2 = 'QL' ORDER BY ord;
+ ord |   name   
+-----+----------
+   1 | division
+   2 | group
+   3 | class
+   4 | subclass
+(4 rows)
+
+SELECT parts('QL-47110'::postal_code);
+                              parts                              
+-----------------------------------------------------------------
+ {"class": "1", "group": "1", "division": "47", "subclass": "0"}
+(1 row)
+
+SELECT part('QL-47191'::postal_code, 'division') AS division, part('QL-47191'::postal_code, 'group') AS grp,
+       part('QL-47191'::postal_code, 'subclass') AS subclass;
+ division | grp | subclass 
+----------+-----+----------
+ 47       | 1   | 1
+(1 row)
+
+SELECT prefix_of('QL-47191'::postal_code, 'division') = postal_prefix('QL-47') AS division_level,
+       prefix_of('QL-47191'::postal_code, 'class') = postal_prefix('QL-4719') AS class_level;
+ division_level | class_level 
+----------------+-------------
+ t              | t
+(1 row)
+
+SELECT sic, prefix_of(sic, 'division') AS division, count(*) OVER (PARTITION BY prefix_of(sic, 'division')) AS in_division
+FROM firms ORDER BY sic;
+   sic    |      division       | in_division 
+----------+---------------------+-------------
+ QL-01110 | [QL-01110,QL-47110) |           1
+ QL-47110 | [QL-47110,QL-~)     |           2
+ QL-47190 | [QL-47110,QL-~)     |           2
+(3 rows)
+
+-- parts can be removed again, and a list with none says so
+SELECT add_country_list('QL', ARRAY['47110', '47190', '47210', '47220', '47300', '01110', '01120', '01130', '47191']);
+ add_country_list 
+------------------
+ 
+(1 row)
+
+SELECT count(*) AS parts_left FROM postal_code_parts WHERE iso2 = 'QL';
+ parts_left 
+------------
+          0
+(1 row)
+
+SELECT version FROM postal_code_languages WHERE iso2 = 'QL' ORDER BY version;
+ version 
+---------
+       1
+(1 row)
+
+SELECT part('QL-47110'::postal_code, 'division');
+ERROR:  postal codes of QL have no named parts
+HINT:  see postal_code_parts for the countries that do; a pattern names parts with (?<name>...)
+-- different codes are the next language, and what was stored under the first still reads as it was written
+SELECT add_country_list('QL', ARRAY['47110', '47190', '47210', '99999']);
+ add_country_list 
+------------------
+ 
+(1 row)
+
+SELECT version, source FROM postal_code_languages WHERE iso2 = 'QL' ORDER BY version;
+ version |     source      
+---------+-----------------
+       1 | list of 9 codes
+       2 | list of 4 codes
+(2 rows)
+
+SELECT 'QL-99999'::postal_code AS new_code;
+ new_code 
+----------
+ QL-99999
+(1 row)
+
+SELECT sic FROM firms ORDER BY sic;
+   sic    
+----------
+ QL-01110
+ QL-47110
+ QL-47190
+(3 rows)
+
+SELECT 'QL-47300'::postal_code;
+ERROR:  cannot parse "47300" as a QL postal code
+LINE 1: SELECT 'QL-47300'::postal_code;
+               ^
+-- from a query
+CREATE TEMP TABLE sic_demo (code text);
+INSERT INTO sic_demo VALUES ('62010'), ('62020'), ('62090'), ('63110'), ('63120'), ('62012');
+SELECT add_country_list_from('QM', 'SELECT code FROM sic_demo');
+ add_country_list_from 
+-----------------------
+ 
+(1 row)
+
+SELECT version, source FROM postal_code_languages WHERE iso2 = 'QM';
+ version |     source      
+---------+-----------------
+       1 | list of 6 codes
+(1 row)
+
+SELECT count(*) AS codes FROM postal_code_list_codes WHERE iso2 = 'QM';
+ codes 
+-------
+     6
+(1 row)
+
+SELECT add_country_list_from('QM', 'SELECT code FROM sic_demo WHERE false');
+ERROR:  a list needs at least one code
+-- a pattern and a list that denote the same codes are one language
+SELECT add_country_template('QO', '/[A-C]\d/');
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT add_country_list('QO', (SELECT array_agg(chr(64 + l) || d) FROM generate_series(1, 3) l, generate_series(0, 9) d));
+NOTICE:  the language of QO is a pattern that denotes exactly these codes and is kept as it is
+ add_country_list 
+------------------
+ 
+(1 row)
+
+SELECT iso2, version, kind FROM postal_code_languages WHERE iso2 = 'QO' ORDER BY version;
+ iso2 | version |  kind   
+------+---------+---------
+ QO   |       1 | pattern
+(1 row)
+
+SELECT add_country_list('QK', ARRAY['AA', 'AB', 'BA']);
+ add_country_list 
+------------------
+ 
+(1 row)
+
+SELECT add_country_template('QK', '/AA|AB|BA/');
+NOTICE:  the language of QK is a list of exactly these codes and is kept as it is
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT iso2, version, kind FROM postal_code_languages WHERE iso2 = 'QK' ORDER BY version;
+ iso2 | version | kind 
+------+---------+------
+ QK   |       1 | list
+(1 row)
+
+-- far more codes than a pattern holds comfortably: about 31,000 of the 100,000 five-digit strings, picked pseudo-randomly
+CREATE TEMP TABLE big AS
+   SELECT lpad(i::text, 5, '0') AS code FROM generate_series(0, 99999) i WHERE get_byte(decode(md5(i::text), 'hex'), 0) < 80;
+SELECT count(*) > 25000 AS a_long_list FROM big;
+ a_long_list 
+-------------
+ t
+(1 row)
+
+SELECT add_country_list_from('QN', 'SELECT code FROM big');
+ add_country_list_from 
+-----------------------
+ 
+(1 row)
+
+SELECT (SELECT count(*) FROM big) = (SELECT count(*) FROM postal_code_list_codes WHERE iso2 = 'QN') AS all_stored;
+ all_stored 
+------------
+ t
+(1 row)
+
+ALTER TABLE big ADD COLUMN pc postal_code;
+UPDATE big SET pc = ('QN-' || code)::postal_code;
+SELECT count(*) AS out_of_order FROM (SELECT code, lag(code) OVER (ORDER BY pc) AS prev FROM big) o WHERE prev > code;
+ out_of_order 
+--------------
+            0
+(1 row)
+
+SELECT count(*) AS round_trip_failures FROM big WHERE pc::text <> 'QN-' || code;
+ round_trip_failures 
+---------------------
+                   0
+(1 row)
+
+-- not in the list: refused
+SELECT count(*) AS unlisted_tried, count(*) FILTER (WHERE is_valid_postal_code('QN-' || c)) AS unlisted_accepted
+FROM (SELECT lpad(i::text, 5, '0') AS c FROM generate_series(0, 99999, 9) i) s WHERE c NOT IN (SELECT code FROM big);
+ unlisted_tried | unlisted_accepted 
+----------------+-------------------
+           7622 |                 0
+(1 row)
+
+-- every prefix range agrees with plain text (40 prefixes of 1 to 4 digits, drawn from the codes). The range is worked out
+-- once per prefix: MATERIALIZED, because PostgreSQL would otherwise fold the CTE into the query and work it out again for
+-- every row it is compared with (about 40 microseconds each).
+WITH pf AS (SELECT p FROM (SELECT DISTINCT left(code, k) AS p FROM big, generate_series(1, 4) k) d ORDER BY md5(p) LIMIT 40),
+     rng AS MATERIALIZED (SELECT p, postal_prefix('QN-' || p) AS r FROM pf),
+     chk AS (SELECT p, (SELECT count(*) FROM big WHERE pc <@ rng.r) = (SELECT count(*) FROM big WHERE code LIKE rng.p || '%') AS agrees FROM rng)
+SELECT count(*) AS prefixes_checked, count(*) FILTER (WHERE NOT agrees) AS disagreeing FROM chk;
+ prefixes_checked | disagreeing 
+------------------+-------------
+               40 |           0
+(1 row)
+
+-- a list that cannot be one is refused, saying where
+SELECT add_country_list('QX', ARRAY['A', 'B', 'A']);
+ERROR:  the code "A" is in the list more than once
+SELECT add_country_list('QX', ARRAY['AB', 'ab']);
+ERROR:  invalid list of postal codes: code 2 (ab): write letters in upper case (codes are upper case; input is folded before matching)
+SELECT add_country_list('QX', ARRAY['A', '']);
+ERROR:  invalid list of postal codes: code 1 is empty
+SELECT add_country_list('QX', ARRAY['A', NULL]);
+ERROR:  a list of codes cannot contain NULL (item 2)
+SELECT add_country_list('QX', ARRAY[repeat('1', 41)]);
+ERROR:  invalid list of postal codes: code 1 (11111111111111111111111111111111111111111) is 41 characters; a code may be at most 40
+SELECT add_country_list('QX', ARRAY['A', E'B\tC']);
+ERROR:  invalid list of postal codes: code 2 (B	C): only printable ASCII characters are allowed
+SELECT add_country_list('QX', ARRAY[]::text[]);
+ERROR:  a list needs at least one code
+SELECT add_country_list('QX', NULL);
+ERROR:  a list needs at least one code
+SELECT add_country_list('Q', ARRAY['A']);
+ERROR:  country code must be exactly two letters, got Q
+SELECT add_country_list_from('QX', 'SELECT nothing FROM nowhere');
+ERROR:  relation "nowhere" does not exist
+LINE 1: SELECT array_agg(c) FROM (SELECT nothing FROM nowhere) AS q(...
+                                                      ^
+QUERY:  SELECT array_agg(c) FROM (SELECT nothing FROM nowhere) AS q(c)
+SELECT count(*) AS leftovers FROM postal_code_languages WHERE iso2 = 'QX';
+ leftovers 
+-----------
+         0
+(1 row)
+
+-- ... or needs more states than the transitions can number (150,000 random 8-digit codes)
+SELECT add_country_list('QX', (SELECT array_agg(DISTINCT substr(translate(md5(i::text), 'abcdef', '012345'), 1, 8)) FROM generate_series(1, 150000) i));
+ERROR:  invalid list of postal codes: this list needs more than 32767 states, the most there is room for
+-- the parts pattern is checked against the codes
+SELECT add_country_list('QX', ARRAY['12345', 'ABCDE'], '/(?<a>\d{2})(?<b>\d{3})/');
+ERROR:  the code "ABCDE" (item 2) does not fit the pattern for the parts of the list
+HINT:  the pattern must accept every code in the list
+SELECT add_country_list('QX', ARRAY['123'], '/(?<a>\d{1,2})(?<b>\d{1,2})/');
+ERROR:  the code "123" (item 1) can be split into its parts in more than one way
+HINT:  make the parts unambiguous, for example give each one a fixed length
+SELECT add_country_list('QX', ARRAY['123'], '/\d{3}/');
+ERROR:  the pattern for the parts of a list names no parts
+HINT:  name them with (?<name>...), e.g. /(?<division>\d{2})(?<rest>\d{3})/
+SELECT add_country_list('QX', ARRAY['123'], '/(?<a>\d/');
+ERROR:  invalid pattern for the parts of a list: missing ")"
+SELECT count(*) AS leftovers FROM postal_code_languages WHERE iso2 = 'QX';
+ leftovers 
+-----------
+         0
+(1 row)
+
+-- a language and its codes are permanent; a list's parts can be named or removed
+UPDATE postal_code_list_codes SET code = '00000' WHERE iso2 = 'QM' AND code = '62010';
+ERROR:  postal_code_list_codes rows are permanent: stored postal_code values are decoded with them
+HINT:  to change a country's codes, add a new list with add_country_list()
+DELETE FROM postal_code_list_codes WHERE iso2 = 'QM';
+ERROR:  postal_code_list_codes rows are permanent: stored postal_code values are decoded with them
+HINT:  to change a country's codes, add a new list with add_country_list()
+TRUNCATE postal_code_list_codes;
+ERROR:  postal_code_list_codes rows are permanent: stored postal_code values are decoded with them
+HINT:  to change a country's codes, add a new list with add_country_list()
+UPDATE postal_code_languages SET source = 'something else' WHERE iso2 = 'QM';
+ERROR:  postal_code_languages rows are permanent: stored postal_code values are decoded with them
+HINT:  to change a country's rules, add a new language with add_country_template() or add_country_list(); a pattern can only be rewritten in place to one that denotes exactly the same codes, as when naming its parts, and a list can only have its parts renamed
+UPDATE postal_code_languages SET kind = 'pattern', pattern = '\d{5}' WHERE iso2 = 'QM';
+ERROR:  postal_code_languages rows are permanent: stored postal_code values are decoded with them
+HINT:  to change a country's rules, add a new language with add_country_template() or add_country_list(); a pattern can only be rewritten in place to one that denotes exactly the same codes, as when naming its parts, and a list can only have its parts renamed
+UPDATE postal_code_languages SET parts_pattern = '(?<a>\d{2})(?<b>\d{3})' WHERE iso2 = 'QM';
+UPDATE postal_code_languages SET parts_pattern = '(?<a>\d' WHERE iso2 = 'QM';
+ERROR:  invalid postal code pattern "(?<a>\d": missing ")"
+SELECT parts_pattern FROM postal_code_languages WHERE iso2 = 'QM';
+     parts_pattern      
+------------------------
+ (?<a>\d{2})(?<b>\d{3})
+(1 row)
+
+-- a pattern language cannot grow a parts pattern, and the two kinds keep to their own fields
+UPDATE postal_code_languages SET parts_pattern = '(?<a>\d)' WHERE iso2 = 'QO' AND kind = 'pattern';
+ERROR:  postal_code_languages rows are permanent: stored postal_code values are decoded with them
+HINT:  to change a country's rules, add a new language with add_country_template() or add_country_list(); a pattern can only be rewritten in place to one that denotes exactly the same codes, as when naming its parts, and a list can only have its parts renamed
+\set VERBOSITY terse
+INSERT INTO postal_code_languages (iso2, version, source, pattern, kind) VALUES ('QZ', 1, 'x', '\d', 'list');
+ERROR:  new row for relation "postal_code_languages" violates check constraint "postal_code_languages_kind_fields"
+INSERT INTO postal_code_languages (iso2, version, source, pattern, kind) VALUES ('QZ', 1, 'x', '', 'pattern');
+ERROR:  new row for relation "postal_code_languages" violates check constraint "postal_code_languages_kind_fields"
+\set VERBOSITY default
+-- the view of the world shows what a country uses (here a built-in country given a list of its own)
+SELECT add_country_list('NO', ARRAY['0150', '0151', '0152']);
+ add_country_list 
+------------------
+ 
+(1 row)
+
+SELECT iso2, format FROM postal_code_world WHERE iso2 IN ('NO', 'PL') ORDER BY iso2;
+ iso2 |     format      
+------+-----------------
+ NO   | list of 3 codes
+ PL   | NN-NNN
+(2 rows)
+

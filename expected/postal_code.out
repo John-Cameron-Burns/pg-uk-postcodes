@@ -2464,15 +2464,16 @@ BEGIN
    END LOOP;
    RAISE NOTICE '% configuration tables dump cleanly with an empty search_path', n;
 END $$;
-NOTICE:  2 configuration tables dump cleanly with an empty search_path
+NOTICE:  3 configuration tables dump cleanly with an empty search_path
 SELECT u.cfg::regclass AS table, coalesce(u.cond, '') AS dumped_where
 FROM pg_extension e, unnest(e.extconfig, e.extcondition) AS u(cfg, cond)
 WHERE e.extname = 'postcode' ORDER BY u.cfg::regclass::text;
            table            |   dumped_where    
 ----------------------------+-------------------
  postal_code_languages      | WHERE NOT builtin
+ postal_code_list_codes     | 
  postal_code_user_countries | 
-(2 rows)
+(3 rows)
 
 -- ===== Fragments that end in a separator, or are just a country's own marker ====
 -- Every text prefix of a code is a fragment, including one that stops right after the hyphen of
