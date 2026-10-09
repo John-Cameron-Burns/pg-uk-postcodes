@@ -1,6 +1,6 @@
 {
    "name": "postcode",
-   "version": "2.0.1",
+   "version": "2.1.0",
    "abstract": "UK postcode type optimised for indexing, plus postal_code for the postal codes of any country",
    "maintainer": "John Burns <john@impactdatametrics.com>",
    "license": "freebsd",
@@ -27,9 +27,9 @@
    "provides": {
       "postcode": {
          "abstract": "UK postcode type optimised for indexing, plus postal_code for any country",
-         "file": "postcode--2.0.1.sql",
+         "file": "postcode--2.1.0.sql",
          "docfile": "README.md",
-         "version": "2.0.1"
+         "version": "2.1.0"
       }
    },
    "resources": {

@@ -16,4 +16,8 @@
 // (postal_code_pattern.c) stays Postgres-free.
 const pc_pattern *pc_language_for (const char iso2[2], int version);
 
+// The named parts of a value's format (its tag, as stored in the value): the language's own pattern, or for a
+// compiled format the pattern in postal_code_format_parts. NULL if there are none. Same lifetime rule.
+const pc_parts *pc_parts_for (const char iso2[2], int fmt);
+
 #endif

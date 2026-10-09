@@ -1771,9 +1771,10 @@ SELECT count(*) AS versions, min(version), max(version) FROM postal_code_languag
 (1 row)
 
 SAVEPOINT all_taken;
+\set VERBOSITY terse
 SELECT add_country_template('XA', 'NNNNNNNNNNN');
 ERROR:  country XA already has 51 postal_code languages, the most there is room for
-CONTEXT:  PL/pgSQL function add_country_template(text,text) line 20 at RAISE
+\set VERBOSITY default
 ROLLBACK TO all_taken;
 SELECT add_country_template('XB', 'NNNNNNNNNNN') IS NOT NULL AS another_country_is_unaffected;
  another_country_is_unaffected 
