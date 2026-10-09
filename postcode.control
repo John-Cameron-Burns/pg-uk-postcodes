@@ -1,5 +1,5 @@
 # postcode
 comment = 'UK postcode type, plus postal_code for any country'
-default_version = '2.0.1'
+default_version = '2.1.0'
 module_pathname = '$libdir/postcode'
 relocatable = true

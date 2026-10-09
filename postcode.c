@@ -3,6 +3,7 @@
 #include <varatt.h>      // split out of postgres.h in PostgreSQL 16
 #endif
 #include <utils/builtins.h>
+#include <utils/fmgrprotos.h>
 #include <libpq/pqformat.h>
 
 // For postcode_eq_partial_support() -- planner-support-function API used
@@ -518,6 +519,77 @@ Datum postcode_to_char (PG_FUNCTION_ARGS) {
    *b = '\0';
 
    PG_RETURN_TEXT_P(cstring_to_text(buf));
+}
+
+
+// ---- named parts of the UK type: part(), parts(), prefix_of() ---------------------------------------------------
+// The same four parts postal_code gives GB -- area, district, sector, walk, the pieces to_char()'s A D S W give --
+// read straight from the layout's own fields, so they are IMMUTABLE and can be indexed. A postcode is always a
+// complete code; a value that is not valid (a range_lower()/range_upper() bound that renders '?') has no parts and
+// gives NULL, as ::text does.
+#define UK_NPARTS 4
+static const char *const uk_part_names[UK_NPARTS] = { "area", "district", "sector", "walk" };
+
+// The text up to and including each part, as the pieces and as the cumulative level, for a valid postcode.
+typedef struct { char piece[UK_NPARTS][4]; char level[UK_NPARTS][9]; } uk_split;
+
+static void uk_split_of (postcode p, uk_split *u) {
+   char *b = u->piece[0]; WRITE_AREA(b, p); *b = '\0';
+   b = u->piece[1]; WRITE_DISTRICT(b, p); *b = '\0';
+   b = u->piece[2]; WRITE_SECTOR(b, p); *b = '\0';
+   b = u->piece[3]; WRITE_WALK(b, p); *b = '\0';
+   strcpy(u->level[0], u->piece[0]);                                   // SW
+   snprintf(u->level[1], sizeof u->level[1], "%s%s", u->piece[0], u->piece[1]);                    // SW1A
+   snprintf(u->level[2], sizeof u->level[2], "%s %s", u->level[1], u->piece[2]);                   // SW1A 1
+   snprintf(u->level[3], sizeof u->level[3], "%s%s", u->level[2], u->piece[3]);                    // SW1A 1AA
+}
+
+static int uk_part_index (const char *name) {
+   for (int i = 0; i < UK_NPARTS; i++) if (strcmp(uk_part_names[i], name) == 0) return i;
+   ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+                   errmsg("postcodes have no part called \"%s\"", name),
+                   errhint("the parts are: area, district, sector, walk")));
+   return -1;
+}
+
+PG_FUNCTION_INFO_V1(postcode_part);
+
+Datum postcode_part (PG_FUNCTION_ARGS) {
+   postcode p = PG_GETARG_POSTCODE(0);
+   int idx = uk_part_index(text_to_cstring(PG_GETARG_TEXT_PP(1)));
+   if (!postcode_binchk(p)) PG_RETURN_NULL();
+   uk_split u;
+   uk_split_of(p, &u);
+   PG_RETURN_TEXT_P(cstring_to_text(u.piece[idx]));
+}
+
+// Everything up to and including the part, as the text the % operator takes: prefix_of(pc, 'sector') is 'SW1A 1',
+// so   WHERE pc % prefix_of(x, 'sector')   finds the postcodes in the same sector.
+PG_FUNCTION_INFO_V1(postcode_prefix_of);
+
+Datum postcode_prefix_of (PG_FUNCTION_ARGS) {
+   postcode p = PG_GETARG_POSTCODE(0);
+   int idx = uk_part_index(text_to_cstring(PG_GETARG_TEXT_PP(1)));
+   if (!postcode_binchk(p)) PG_RETURN_NULL();
+   uk_split u;
+   uk_split_of(p, &u);
+   PG_RETURN_TEXT_P(cstring_to_text(u.level[idx]));
+}
+
+PG_FUNCTION_INFO_V1(postcode_parts_json);
+
+Datum postcode_parts_json (PG_FUNCTION_ARGS) {
+   postcode p = PG_GETARG_POSTCODE(0);
+   if (!postcode_binchk(p)) PG_RETURN_NULL();
+   uk_split u;
+   uk_split_of(p, &u);
+   StringInfoData out;
+   initStringInfo(&out);
+   appendStringInfoChar(&out, '{');
+   for (int i = 0; i < UK_NPARTS; i++)                       // the pieces are letters and digits: nothing to escape
+      appendStringInfo(&out, "%s\"%s\":\"%s\"", i ? "," : "", uk_part_names[i], u.piece[i]);
+   appendStringInfoChar(&out, '}');
+   PG_RETURN_DATUM(DirectFunctionCall1(jsonb_in, CStringGetDatum(out.data)));
 }
 
 

@@ -1771,9 +1771,10 @@ SELECT count(*) AS versions, min(version), max(version) FROM postal_code_languag
 (1 row)
 
 SAVEPOINT all_taken;
+\set VERBOSITY terse
 SELECT add_country_template('XA', 'NNNNNNNNNNN');
 ERROR:  country XA already has 51 postal_code languages, the most there is room for
-CONTEXT:  PL/pgSQL function add_country_template(text,text) line 20 at RAISE
+\set VERBOSITY default
 ROLLBACK TO all_taken;
 SELECT add_country_template('XB', 'NNNNNNNNNNN') IS NOT NULL AS another_country_is_unaffected;
  another_country_is_unaffected 
@@ -1805,7 +1806,7 @@ ERROR:  invalid postal code pattern "/\d*/": "*" would allow codes of any length
 SELECT postal_code_pattern_check('/./');
 ERROR:  invalid postal code pattern "/./": "." is not allowed: write the characters out as a class, e.g. [0-9A-Z]
 SELECT postal_code_pattern_check('/(?=\d)\d/');
-ERROR:  invalid postal code pattern "/(?=\d)\d/": only (?: ) grouping is supported, not lookahead or other (?...) forms
+ERROR:  invalid postal code pattern "/(?=\d)\d/": only (?: ) grouping and (?<name> ) named parts are supported, not lookahead or other (?...) forms
 SELECT postal_code_pattern_check('/[a-z]/');
 ERROR:  invalid postal code pattern "/[a-z]/": write letters in upper case (codes are upper case; input is folded before matching)
 SELECT postal_code_pattern_check('/\d{3}');

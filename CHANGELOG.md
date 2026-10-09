@@ -1,5 +1,55 @@
 # Changes
 
+## 2.1.0 (not yet released)
+
+**Upgrading from 2.0.x or 1.3.x:** `ALTER EXTENSION postcode UPDATE;`. Nothing stored changes; 2.1.0 only adds. (A rehearsal on a copy of the production database took 123 ms and left 21 million postcodes bit-for-bit identical.)
+
+**New: named parts.** A pattern can name the parts of a code, `(?<name>...)`, and the parts can be read back:
+
+    SELECT add_country_template('XQ', '/(?<major>\d{2})-(?<minor>\d{3})/');
+    SELECT part('XQ-12-345'::postal_code, 'major');               -- 12
+    SELECT parts('XQ-12-345'::postal_code);                       -- {"major": "12", "minor": "345"}
+    SELECT prefix_of('XQ-12-345'::postal_code, 'major');          -- the range of every code that starts XQ-12
+
+* `part(code, name)` is the piece of text; `prefix_of(code, name)` is everything up to and including it, as a
+  `postal_code_range` (indexable, groupable, usable with `<@`). For GB these are the pieces `area`, `district`,
+  `sector` and `walk` (as `to_char` names them) and Royal Mail's levels: `part('GB-SW1A 1AA', 'district')` is `1A`;
+  `prefix_of(..., 'district')` is the range of `GB-SW1A`.
+* `parts(code)` is all of them as `jsonb` (a part the code does not have is null). The view `postal_code_parts`
+  lists the parts each country has, in order. GB (and GG, GI, IM, JE), US, CA, IE and BR have parts, and so do 29 of the
+  built-in pattern countries (those whose codes really have two kinds of information in them: ES and TR province, KY
+  island, MT locality, NL digits and letters, the `base` and `extension` of CO CR IR LB MZ PT SA TW VE, the `zip5` and `plus4`
+  of the US territories, the two blocks of JP PL CL BM SO, and AR). The other 142 pattern countries -- one undivided number, or only grouped for
+  display, or a code of two lengths, or a single fixed code -- and FR, CZ and LU have none, and `part()` says so.
+* **The UK `postcode` type has the same four parts**: `part(pc, 'area')`, `parts(pc)` and `prefix_of(pc, 'district')` (which
+  returns the text the `%` operator takes). They are read from the type's own fields, so they are `IMMUTABLE` and can be
+  indexed. Every `to_char` letter combination has a replacement; the README has the table.
+* Because two types now have `part()`, `parts()` and `prefix_of()`, **a bare string literal is ambiguous**:
+  `part('SW1A 1AA', 'area')` is "function part(unknown, unknown) is not unique". Cast it; a column needs nothing.
+* A name changes nothing about which codes are valid or how they are stored or ranked, so nothing stored is touched.
+* Names are labels, not rules: the same codes written or named differently relabel the current language of a
+  country instead of making a new version (which would make different values), and a language's pattern may be
+  rewritten in place to any pattern that denotes exactly the same codes (`postal_code_same_codes()`, an exact
+  comparison). A different set of codes is still a new version.
+* A pattern whose parts could split some code two ways is refused when it is defined, with an example code. Up to
+  10 million codes every code is tried; above that an exact analysis of the pattern decides (up to 2,000 positions);
+  beyond that a sample is checked and a notice says only some codes were.
+* A part must match at least one character and cannot be repeated (`{2}`); lookbehind is refused. Templates cannot
+  name parts: write a regular expression.
+* `make installcheck` gains a `parts` test; the standalone tests gain the named-parts engine, the ambiguity check,
+  the GB parts against the `postcode` layout's own fields (8.3 million codes) and the US, CA, IE and BR parts
+  against their encoders.
+
+**Deprecated: `to_char(postcode, text)`.** It keeps working unchanged and will not be removed within 2.x, but it is
+not a sensible way to take a code apart (its `A D S W` letters give pieces, not Royal Mail's district and sector).
+Use `part()` / `prefix_of()`. The function carries a `COMMENT` saying so; there is no run-time warning, since it is
+used in queries and a warning per call would flood logs.
+
+* A change that could surprise: re-adding a pattern that denotes the same codes as a country's current language,
+  written differently, no longer makes a new version (which made different values). For your own language it relabels it;
+  for a built-in language it says so in a NOTICE and keeps it. The very spec a language was made from is still silent, as in 2.0.x.
+* The error for a statement that is not `(?: )` or `(?<name> )` grouping now mentions named parts.
+
 ## 2.0.1
 
 **Upgrading from 2.0.0 or 1.3.x:** `ALTER EXTENSION postcode UPDATE;`

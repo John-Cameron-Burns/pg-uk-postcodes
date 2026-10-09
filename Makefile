@@ -1,13 +1,13 @@
 EXTENSION    = postcode
-EXTVERSION   = 2.0.1
+EXTVERSION   = 2.1.0
 
 MODULE_big   = postcode
 OBJS         = postcode.o binfmt.o postal_code.o postal_code_fmt.o postal_code_country.o \
                 postal_code_us.o postal_code_ca.o postal_code_fr.o postal_code_br.o postal_code_cz.o postal_code_lu.o \
                 postal_code_gb.o postal_code_ie.o postal_code_pattern.o postal_code_lang.o
-DATA         = postcode--1.3.0.sql postcode--1.3.1.sql postcode--1.3.2.sql postcode--1.3.3.sql postcode--1.3.4.sql postcode--1.3.5.sql postcode--2.0.0.sql postcode--2.0.1.sql \
-                postcode--1.3.0--1.3.1.sql postcode--1.3.1--1.3.2.sql postcode--1.3.2--1.3.3.sql postcode--1.3.3--1.3.4.sql postcode--1.3.4--1.3.5.sql postcode--1.3.5--2.0.0.sql postcode--2.0.0--2.0.1.sql postcode--1.3.5--2.0.1.sql
-REGRESS      = parser binary sort random quirks format match partial dps range cast support selectivity postal_code
+DATA         = postcode--1.3.0.sql postcode--1.3.1.sql postcode--1.3.2.sql postcode--1.3.3.sql postcode--1.3.4.sql postcode--1.3.5.sql postcode--2.0.0.sql postcode--2.0.1.sql postcode--2.1.0.sql \
+                postcode--1.3.0--1.3.1.sql postcode--1.3.1--1.3.2.sql postcode--1.3.2--1.3.3.sql postcode--1.3.3--1.3.4.sql postcode--1.3.4--1.3.5.sql postcode--1.3.5--2.0.0.sql postcode--2.0.0--2.0.1.sql postcode--1.3.5--2.0.1.sql postcode--2.0.1--2.1.0.sql
+REGRESS      = parser binary sort random quirks format match partial dps range cast support selectivity postal_code parts
 REGRESS_OPTS = --load-extension=$(EXTENSION)
 PG_CPPFLAGS  = -std=c99 -Wall -DEXTVERSION=$(EXTVERSION) -DTRUE=true -DFALSE=false
 
@@ -54,4 +54,4 @@ install-script:
 
 verify-install-script:
 	sh tools/build_install_script.sh $(EXTVERSION) | diff -u postcode--$(EXTVERSION).sql - \
-	   && echo "postcode--$(EXTVERSION).sql is up to date with postcode--1.3.5--$(EXTVERSION).sql"
+	   && echo "postcode--$(EXTVERSION).sql is up to date with its upgrade script"

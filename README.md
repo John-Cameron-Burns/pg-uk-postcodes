@@ -48,6 +48,13 @@ single space between the outcode and incode. If an alternative format is
 required a to_char() function is provided. The default output is equivalent
 to calling to_char(postcode, 'AD SW');
 
+**`to_char(postcode, text)` is deprecated** (from 2.1; it still works and will not be removed within 2.x). Cutting
+a postcode up by format letters is not a sensible way to get at its parts. `A`, `D`, `S` and `W` give the
+*pieces* (`EC`, `4Y`, `0`, `HQ`), which is not what Royal Mail calls the district or the sector, and a
+format string cannot say so. Use the named parts of `postal_code` instead: `part(pc, 'area')`, `part(pc, 'district')`,
+`part(pc, 'sector')` and `part(pc, 'walk')` for the pieces, and `prefix_of(pc, 'district')` for Royal Mail's
+cumulative levels (`EC4Y`, `EC4Y 0`, ...). To render the text form, use `::text`.
+
 Rendering never fails as of 1.3.3. A field that isn't a valid, complete
 value -- which in practice means a range_lower()/range_upper() boundary
 from a fragment short enough to leave something genuinely unfillable, or
@@ -407,6 +414,65 @@ as for validity). It is also NULL for the end-of-country bound, which is not a
 postcode. `outcode()` is `IMMUTABLE` -- it reads only the value's own bits, never
 the country table -- so it can be indexed: `CREATE INDEX ON t (outcode(pc))`.
 
+### Named parts
+
+A pattern can name the parts of a code with `(?<name>...)`, and `part()`, `parts()` and `prefix_of()` read them back.
+A name changes nothing about which codes are valid, how they are stored or how they rank; it only says where in a code
+the part is.
+
+    SELECT add_country_template('XQ', '/(?<major>\d{2})-(?<minor>\d{3})(-(?<extra>[A-C]))?/');
+    SELECT part('XQ-12-345-B'::postal_code, 'minor');         -- 345
+    SELECT part('XQ-12-345'::postal_code, 'extra');           -- NULL: this code has no such part
+    SELECT parts('XQ-12-345-B'::postal_code);                 -- {"extra": "B", "major": "12", "minor": "345"}
+    SELECT * FROM postal_code_parts WHERE iso2 = 'XQ' ORDER BY ord;    -- the parts a country has, in order
+
+`part(code, name)` returns the piece of text. `prefix_of(code, name)` returns everything up to and including it, as the
+`postal_code_range` of every code that starts that way, so it can be used with `<@`, indexed like `postal_prefix()`, and
+grouped by:
+
+    SELECT part('GB-SW1A 1AA'::postal_code, 'district');          -- 1A        the piece
+    SELECT prefix_of('GB-SW1A 1AA'::postal_code, 'district');     -- [GB-SW1A,GB-SW1B)   Royal Mail's district
+    SELECT prefix_of(pc, 'district'), count(*) FROM addresses GROUP BY 1;
+
+The same word therefore means the piece in `part()` and everything up to and including it in `prefix_of()`. GB's parts
+are `area`, `district`, `sector` and `walk`, named as the UK type's `to_char` letters `A D S W` name them.
+
+**Which countries have parts.** The compiled formats GB (and GG, GI, IM, JE), US, CA (`fsa`, `ldu`), IE (`routing_key`,
+`unique_id`) and BR (`region`, `area`, `suffix`), and 29 of the built-in pattern countries; `SELECT * FROM postal_code_parts`
+lists them. A country has parts only where its system really has two kinds of information in a code: a province and
+the rest (ES, TR), an island and a number (KY), a locality and a number (MT), digits and letters (NL), a base with an optional
+extension (`base`, `extension`: CO, CR, IR, LB, MZ, PT, SA, TW, VE), the US territories' `zip5` and `plus4`, or the two
+blocks of a code whose separator is part of its official form (`prefix`, `suffix`: JP, PL, CL, BM, SO). The other
+142 pattern countries have no parts, and `part()` says so: their code is one number (most of them: `NNNNN`, as in FR, CZ and
+LU), or is only written in groups for display (SE, SK, GR), or comes in two lengths without the longer being the shorter plus
+something (IL, EG, VN), or is a single fixed code, or has a leading region that is not a separate field (DE, MX). `part()`
+always says which parts there are.
+
+**The UK `postcode` type has the same four parts**, read from its fields, so they are `IMMUTABLE` and can be indexed, and
+`prefix_of(postcode, ...)` returns the text the `%` operator takes. This is what the deprecated `to_char` is replaced by:
+
+| `to_char(pc, ...)` | now |
+|---|---|
+| `'A'`, `'D'`, `'S'`, `'W'` | `part(pc, 'area')`, `part(pc, 'district')`, `part(pc, 'sector')`, `part(pc, 'walk')` |
+| `'AD'` (the outcode, Royal Mail's district) | `prefix_of(pc, 'district')` |
+| `'AD S'` (the sector) | `prefix_of(pc, 'sector')` |
+| `'AD SW'` (the whole code) | `prefix_of(pc, 'walk')`, or `pc::text` |
+
+    SELECT * FROM addresses WHERE pc % prefix_of('SW1A 1AA'::postcode, 'sector');   -- the same sector
+
+With two types having these functions, **a bare string literal is ambiguous** (`part('SW1A 1AA', 'area')` is "function
+part(unknown, unknown) is not unique"): cast it, `'SW1A 1AA'::postcode`. A column needs nothing, and `to_char` itself has always
+been the same.
+
+* A part must match at least one character, and cannot be repeated (`{2}`); only `?` may follow it. It may be inside an
+  alternation or inside another part, and a part the code does not have is NULL.
+* If some code could be split into its parts in more than one way, the pattern is refused with an example
+  (`(?<a>\d{1,2})(?<b>\d{1,2})` splits `123` two ways). Up to 10 million codes every code is tried; above that an exact
+  analysis of the pattern decides; a pattern too large even for that is checked on a sample and you are told so.
+* Names are labels, not rules: the same codes written or named differently never make a new version (which would make
+  different values). `add_country_template()` relabels your current language; a built-in one is kept as it is.
+* A template (`NN-NNN`) cannot name parts; write the regular expression.
+
 ### Partial match and ranges
 
 A *fragment* is `CC-` plus a **prefix** of the national code -- `GB-LS24`, `FR-75`,
@@ -647,7 +713,12 @@ developed up to 1.3.0.
 PGXN could not reach Dave Green, so David Wheeler of PGXN made John Burns of Impact Data Metrics a
 co-owner of the distribution, which lets him make releases; Dave Green remains the primary owner. John took
 it up for bug fixing and gap filing and added the international `postal_code` type in 2.0.
-Claude AI was used to analyse and apply code fixes and generate tests
+
+**How the 2.x code was written.** Most of it was written with Claude Code, an AI coding assistant (Anthropic's Claude):
+the bug fixes from 1.3.1, the `postal_code` type and its pattern engine, named parts, the SQL, the documentation and the tests.
+John Burns specified what was wanted, made the design decisions, reviewed the results, and runs the extension on his
+organisation's production data. Dave Green's code is the foundation it is built on. Every commit is built and tested in
+CI on PostgreSQL 14 to 18 (`.github/workflows/`), and `VALIDATION.md` records what it was checked against.
 
 Bugs
 ----

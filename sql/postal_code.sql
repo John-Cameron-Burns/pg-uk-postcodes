@@ -692,7 +692,9 @@ SELECT count(add_country_template('XA', t)) AS filled FROM (
 ) f;
 SELECT count(*) AS versions, min(version), max(version) FROM postal_code_languages WHERE iso2 = 'XA';
 SAVEPOINT all_taken;
+\set VERBOSITY terse
 SELECT add_country_template('XA', 'NNNNNNNNNNN');
+\set VERBOSITY default
 ROLLBACK TO all_taken;
 SELECT add_country_template('XB', 'NNNNNNNNNNN') IS NOT NULL AS another_country_is_unaffected;
 ROLLBACK;

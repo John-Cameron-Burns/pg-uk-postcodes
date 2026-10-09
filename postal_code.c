@@ -12,6 +12,7 @@
 #include <catalog/namespace.h>
 #include <catalog/pg_type.h>
 #include <utils/array.h>
+#include <utils/fmgrprotos.h>
 #include <commands/trigger.h>
 #include <nodes/makefuncs.h>
 #include <nodes/nodeFuncs.h>
@@ -82,6 +83,12 @@ Datum postal_code_pattern_check (PG_FUNCTION_ARGS);
 Datum postal_code_pattern_size (PG_FUNCTION_ARGS);
 Datum postal_code_lenient_text (PG_FUNCTION_ARGS);
 Datum postal_code_country  (PG_FUNCTION_ARGS);
+Datum postal_code_part (PG_FUNCTION_ARGS);
+Datum postal_code_part_end (PG_FUNCTION_ARGS);
+Datum postal_code_parts_json (PG_FUNCTION_ARGS);
+Datum postal_code_pattern_part_names (PG_FUNCTION_ARGS);
+Datum postal_code_same_codes (PG_FUNCTION_ARGS);
+Datum postal_code_parts_check (PG_FUNCTION_ARGS);
 
 // Why a country code failed to resolve, so the strict constructors can
 // raise a specific error and to_postal_code() can decide which of them
@@ -1048,6 +1055,188 @@ Datum postal_code_outcode (PG_FUNCTION_ARGS) {
    PG_RETURN_POSTAL_CODE(pc);
 }
 
+
+
+// ---- named parts: part(), part_end(), parts, and the pattern functions behind them -----------------------------
+// A pattern may name parts of a code, (?<name>...) -- see NAMED_PARTS.md. Splitting works on the code's canonical
+// text without its "CC-" (what postal_code_out writes), against the parts pattern of the value's own format: the
+// language's pattern, or for a compiled format the row in postal_code_format_parts. Nothing here touches how a
+// value is stored.
+
+#define PARTS_NATIONAL_MAX 64
+
+// Renders `pc` and finds its parts. False for the end-of-country bound (which is not a postcode).
+static bool value_parts (postal_code pc, const pc_parts **parts, char *national, char iso2[2]) {
+   pc_format fmt = (pc_format) GET_FORMAT(pc);
+   pc_unpack_country((uint16_t) GET_COUNTRY(pc), iso2);
+   if (fmt == PC_FMT_END && GET_PAYLOAD(pc) == 0) return false;
+
+   fmt_impl f;
+   if (!fmt_resolve(fmt, iso2, &f))
+      ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+                      errmsg (_("cannot split corrupted binary data into parts"))));
+   if (fmt_max_text_len(&f) >= PARTS_NATIONAL_MAX)
+      ereport(ERROR, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED), errmsg("postal code too long to split into parts")));
+   fmt_render(&f, GET_PAYLOAD(pc), national);          // rendered first: the lookup below may invalidate f.pat
+
+   *parts = pc_parts_for(iso2, (int) fmt);
+   if (!*parts)
+      ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+                      errmsg("postal codes of %c%c have no named parts", iso2[0], iso2[1]),
+                      errhint("see postal_code_parts for the countries that do; a pattern names parts with (?<name>...)")));
+   return true;
+}
+
+// The index of the named part, or an error that lists the ones there are.
+static int part_index (const pc_parts *parts, const char *name, const char iso2[2]) {
+   for (int i = 0; i < pc_parts_count(parts); i++)
+      if (strcmp(pc_parts_name(parts, i), name) == 0) return i;
+   StringInfoData have;
+   initStringInfo(&have);
+   for (int i = 0; i < pc_parts_count(parts); i++) appendStringInfo(&have, "%s%s", i ? ", " : "", pc_parts_name(parts, i));
+   if (!have.len) appendStringInfoString(&have, "none");
+   ereport(ERROR, (errcode(ERRCODE_UNDEFINED_OBJECT),
+                   errmsg("postal codes of %c%c have no part called \"%s\"", iso2[0], iso2[1], name),
+                   errhint("the parts are: %s", have.data)));
+   return -1;
+}
+
+static void split_value (postal_code pc, const char *name, char *national, int *start, int *end, bool *isend) {
+   const pc_parts *parts;
+   char iso2[2];
+   *isend = !value_parts(pc, &parts, national, iso2);
+   if (*isend) return;
+   int idx = part_index(parts, name, iso2);
+   int s[PC_PAT_MAX_NAMES], e[PC_PAT_MAX_NAMES];
+   int m = pc_parts_match(parts, national, s, e);
+   if (m != 1)
+      ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+                      errmsg("cannot split the postal code \"%c%c-%s\" into parts: %s", iso2[0], iso2[1], national,
+                             m < 0 ? "its parts pattern is too complex" : "it does not fit the parts pattern of its format")));
+   *start = s[idx];
+   *end = e[idx];
+}
+
+// part(code, 'name'): the text of the part, NULL if this code has no such part (an optional part that is absent).
+PG_FUNCTION_INFO_V1(postal_code_part);
+
+Datum postal_code_part (PG_FUNCTION_ARGS) {
+   postal_code pc = PG_GETARG_POSTAL_CODE(0);
+   char *name = text_to_cstring(PG_GETARG_TEXT_PP(1));
+   char national[PARTS_NATIONAL_MAX + 1];
+   int s = -1, e = -1;
+   bool isend;
+   split_value(pc, name, national, &s, &e, &isend);
+   if (isend || s < 0) PG_RETURN_NULL();
+   PG_RETURN_TEXT_P(cstring_to_text_with_len(national + s, e - s));
+}
+
+// Where the part ends in the code's text without its "CC-"; NULL if the code has no such part. prefix_of() cuts there.
+PG_FUNCTION_INFO_V1(postal_code_part_end);
+
+Datum postal_code_part_end (PG_FUNCTION_ARGS) {
+   postal_code pc = PG_GETARG_POSTAL_CODE(0);
+   char *name = text_to_cstring(PG_GETARG_TEXT_PP(1));
+   char national[PARTS_NATIONAL_MAX + 1];
+   int s = -1, e = -1;
+   bool isend;
+   split_value(pc, name, national, &s, &e, &isend);
+   if (isend || s < 0) PG_RETURN_NULL();
+   PG_RETURN_INT32(e);
+}
+
+static void json_string (StringInfo out, const char *s, int len) {
+   appendStringInfoChar(out, '"');
+   for (int i = 0; i < len; i++) {
+      if (s[i] == '"' || s[i] == '\\') appendStringInfoChar(out, '\\');
+      appendStringInfoChar(out, s[i]);
+   }
+   appendStringInfoChar(out, '"');
+}
+
+// All the parts as jsonb; a part the code does not have is null. (jsonb keeps its keys in its own order; the order
+// in the pattern is the ord column of postal_code_parts.)
+PG_FUNCTION_INFO_V1(postal_code_parts_json);
+
+Datum postal_code_parts_json (PG_FUNCTION_ARGS) {
+   postal_code pc = PG_GETARG_POSTAL_CODE(0);
+   const pc_parts *parts;
+   char national[PARTS_NATIONAL_MAX + 1], iso2[2];
+   if (!value_parts(pc, &parts, national, iso2)) PG_RETURN_NULL();
+   int s[PC_PAT_MAX_NAMES], e[PC_PAT_MAX_NAMES];
+   int m = pc_parts_match(parts, national, s, e);
+   if (m != 1)
+      ereport(ERROR, (errcode(ERRCODE_DATA_CORRUPTED),
+                      errmsg("cannot split the postal code \"%c%c-%s\" into parts", iso2[0], iso2[1], national)));
+   StringInfoData out;
+   initStringInfo(&out);
+   appendStringInfoChar(&out, '{');
+   for (int i = 0; i < pc_parts_count(parts); i++) {
+      if (i) appendStringInfoChar(&out, ',');
+      json_string(&out, pc_parts_name(parts, i), (int) strlen(pc_parts_name(parts, i)));
+      appendStringInfoChar(&out, ':');
+      if (s[i] < 0) appendStringInfoString(&out, "null");
+      else json_string(&out, national + s[i], e[i] - s[i]);
+   }
+   appendStringInfoChar(&out, '}');
+   PG_RETURN_DATUM(DirectFunctionCall1(jsonb_in, CStringGetDatum(out.data)));
+}
+
+// The names a pattern gives its parts, in order -- what the postal_code_parts view lists.
+PG_FUNCTION_INFO_V1(postal_code_pattern_part_names);
+
+Datum postal_code_pattern_part_names (PG_FUNCTION_ARGS) {
+   char *regex = text_to_cstring(PG_GETARG_TEXT_PP(0));
+   char err[200];
+   pc_parts *parts = pc_parts_compile(regex, palloc, err, sizeof err);
+   if (!parts)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid postal code pattern \"%s\": %s", regex, err)));
+   int n = pc_parts_count(parts);
+   Datum *elems = palloc(sizeof(Datum) * (size_t) (n ? n : 1));
+   for (int i = 0; i < n; i++) elems[i] = CStringGetTextDatum(pc_parts_name(parts, i));
+   PG_RETURN_ARRAYTYPE_P(construct_array(elems, n, TEXTOID, -1, false, TYPALIGN_INT));
+}
+
+// Whether two patterns (regular expressions, as stored) denote exactly the same set of codes. A language whose
+// codes are the same set, however written or named, ranks them identically, so it is the same language.
+PG_FUNCTION_INFO_V1(postal_code_same_codes);
+
+Datum postal_code_same_codes (PG_FUNCTION_ARGS) {
+   char *ra = text_to_cstring(PG_GETARG_TEXT_PP(0));
+   char *rb = text_to_cstring(PG_GETARG_TEXT_PP(1));
+   char err[200];
+   pc_pattern *a = pc_pattern_compile(ra, palloc, err, sizeof err);
+   if (!a) ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid postal code pattern \"%s\": %s", ra, err)));
+   pc_pattern *b = pc_pattern_compile(rb, palloc, err, sizeof err);
+   if (!b) ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid postal code pattern \"%s\": %s", rb, err)));
+   PG_RETURN_BOOL(pc_pattern_same_codes(a, b));
+}
+
+// Run when a pattern with named parts is defined. An error if some code could be split into its parts in
+// more than one way; otherwise NULL, or a message if the check could only look at some of the codes.
+PG_FUNCTION_INFO_V1(postal_code_parts_check);
+
+Datum postal_code_parts_check (PG_FUNCTION_ARGS) {
+   char *regex = text_to_cstring(PG_GETARG_TEXT_PP(0));
+   char err[200], msg[300];
+   pc_parts *parts = pc_parts_compile(regex, palloc, err, sizeof err);
+   if (!parts)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid postal code pattern \"%s\": %s", regex, err)));
+   if (pc_parts_count(parts) == 0) PG_RETURN_NULL();
+   pc_pattern *pat = pc_pattern_compile(regex, palloc, err, sizeof err);
+   if (!pat)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid postal code pattern \"%s\": %s", regex, err)));
+   int verdict = pc_parts_check(parts, pat, msg, sizeof msg);
+   if (verdict == PC_CHECK_UNAMBIGUOUS) PG_RETURN_NULL();
+   if (verdict == PC_CHECK_PARTIAL)
+      PG_RETURN_TEXT_P(cstring_to_text(psprintf("the named parts could only be checked for ambiguity in part: %s", msg)));
+   if (verdict == PC_CHECK_AMBIGUOUS)
+      ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                      errmsg("the named parts of this pattern are ambiguous: the code \"%s\" can be split into its parts in more than one way", msg),
+                      errhint("make the parts unambiguous, for example give each one a different set of characters or a fixed length")));
+   ereport(ERROR, (errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED), errmsg("cannot check the named parts of this pattern: %s", msg)));
+   PG_RETURN_NULL();
+}
 
 // ---- country lock: postal_code('US') -----------------------------------------
 // PostGIS locks a geometry column to an SRID with a type modifier, and so
