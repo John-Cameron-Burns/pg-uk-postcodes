@@ -414,6 +414,41 @@ as for validity). It is also NULL for the end-of-country bound, which is not a
 postcode. `outcode()` is `IMMUTABLE` -- it reads only the value's own bits, never
 the country table -- so it can be indexed: `CREATE INDEX ON t (outcode(pc))`.
 
+### Named parts
+
+A pattern can name the parts of a code with `(?<name>...)`, and `part()`, `parts()` and `prefix_of()` read them back.
+A name changes nothing about which codes are valid, how they are stored or how they rank; it only says where in a code
+the part is.
+
+    SELECT add_country_template('XQ', '/(?<major>\d{2})-(?<minor>\d{3})(-(?<extra>[A-C]))?/');
+    SELECT part('XQ-12-345-B', 'minor');            -- 345
+    SELECT part('XQ-12-345', 'extra');              -- NULL: this code has no such part
+    SELECT parts('XQ-12-345-B');                    -- {"extra": "B", "major": "12", "minor": "345"}
+    SELECT * FROM postal_code_parts WHERE iso2 = 'XQ' ORDER BY ord;    -- the parts a country has, in order
+
+`part(code, name)` returns the piece of text. `prefix_of(code, name)` returns everything up to and including it, as the
+`postal_code_range` of every code that starts that way, so it can be used with `<@`, indexed like `postal_prefix()`, and
+grouped by:
+
+    SELECT part('GB-SW1A 1AA', 'district');          -- 1A        the piece
+    SELECT prefix_of('GB-SW1A 1AA', 'district');     -- [GB-SW1A,GB-SW1B)   Royal Mail's district
+    SELECT prefix_of(pc, 'district'), count(*) FROM addresses GROUP BY 1;
+
+The same word therefore means the piece in `part()` and everything up to and including it in `prefix_of()`. GB's parts
+are `area`, `district`, `sector` and `walk`, named as the UK type's `to_char` letters `A D S W` name them (which is why
+`to_char` is deprecated: those letters give pieces, not Royal Mail's levels). The compiled formats US (`zip5`, `plus4`),
+CA (`fsa`, `ldu`), IE (`routing_key`, `unique_id`) and BR (`region`, `area`, `suffix`) have parts too; FR, CZ and LU,
+whose codes are one number, have none and `part()` says so.
+
+* A part must match at least one character, and cannot be repeated (`{2}`); only `?` may follow it. It may be inside an
+  alternation or inside another part, and a part the code does not have is NULL.
+* If some code could be split into its parts in more than one way, the pattern is refused with an example
+  (`(?<a>\d{1,2})(?<b>\d{1,2})` splits `123` two ways). Up to 10 million codes every code is tried; above that an exact
+  analysis of the pattern decides; a pattern too large even for that is checked on a sample and you are told so.
+* Names are labels, not rules: adding, changing or removing them from a pattern that denotes the same codes relabels the
+  country's current language instead of making a new version (a new version would make different values).
+* A template (`NN-NNN`) cannot name parts; write the regular expression.
+
 ### Partial match and ranges
 
 A *fragment* is `CC-` plus a **prefix** of the national code -- `GB-LS24`, `FR-75`,

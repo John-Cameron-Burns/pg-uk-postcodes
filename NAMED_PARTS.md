@@ -1,7 +1,9 @@
 # Named parts: `(?<name>...)` in patterns
 
-Status: prototyped in the standalone engine (`postal_code_pattern.c`, `test_postal_code_parts.c`); the SQL layer
-is not built. Branch `named-parts-spike`.
+Status: built for 2.1.0 -- the engine (`postal_code_pattern.c`), the SQL layer (`postcode--2.0.1--2.1.0.sql`,
+`postal_code.c`, `postal_code_lang.c`), and tests at three levels: the standalone engine
+(`test_postal_code_parts.c`), the compiled formats against their encoders (`test_parts_gb.c`,
+`test_parts_compiled.c`), and the regression test `sql/parts.sql`. Branch `dev/postal_code-2.1-named-parts`.
 
 ## What it is
 
@@ -30,10 +32,12 @@ automaton passes straight through it. It only says where in a code the part is. 
 
 1. **Ambiguity check: decided** (see the table). Memory for the static analysis is about 9 bytes per pair of
    positions (up to about 72 MB at the 2,000-position limit), only while a pattern is being defined.
-2. **Names are metadata, the set is permanent.** Language rows are immutable today. Relax that: a row's pattern may
-   be replaced by one whose names-stripped regex is identical (`pc_pattern_strip_names()`). That lets names be
-   added to the 194 built-in countries, or corrected, without a new version. A new version would
-   create different values, which is wrong for a labelling fix.
+2. **Names are labels, the set is permanent: done.** A language row's pattern may be rewritten in place to any pattern
+   that denotes exactly the same codes, judged by an exact comparison of the compiled automata
+   (`pc_pattern_same_codes()`, `postal_code_same_codes()`; checked against brute force on 19,457 random pairs, 0
+   wrong). It is not judged by text with the names stripped, which I tried first: `\d{2}-\d{3}` is not textually
+   `(?:\d{2})-(?:\d{3})`, so "removing the names" made a new version. A built-in row is never edited (it comes back
+   with the extension), so another spelling of a built-in language is the country's next language, as in 2.0.x.
 3. **Compiled formats** (US, CA, FR, BR, CZ, LU, GB, IE) store codes in their own layout, but their text is
    canonical. Ship a parts-only pattern for each, used only for splitting. Only the meaningful parts are named
    (US: ZIP and +4; BR: the CEP's region digits and suffix, not an arbitrary split). A CI test compiles each parts
@@ -44,18 +48,21 @@ automaton passes straight through it. It only says where in a code the part is. 
    in the template form therefore just translates to `(?<name>...)`. Proposed: `(name:NNN)`, e.g.
    `(area:AA)(district:N[X])[ (sector:N)(unit:AA)]`; templates have no parentheses of their own.
 
-## SQL layer (to build)
+## SQL layer (built)
 
-    part(code, 'district')          text; NULL if absent; an error if the value's version has no such part
-    parts(code)                     jsonb of every part (NULL for absent)
-    postal_code_parts               view: country, version, name, order, the sub-pattern -- the parts a scheme has
-    prefix_of(code, 'group')        the code truncated after that part, as a postal_code_range
+    part(code, 'district')          text; NULL if absent; an error, listing the parts, if the country has no such part
+    parts(code)                     jsonb of every part (null for absent); jsonb orders its own keys
+    postal_code_parts               view: country, format, ord, name -- the parts each country has, in order
+    prefix_of(code, 'group')        everything up to and including that part, as a postal_code_range
                                     (indexable, groupable, usable with <@)
 
-- `part()` and `parts()` are `STABLE` (they read the language table), so no functional index on them. Use
+- `part()`, `parts()` and `prefix_of()` are `STABLE` (they read the language table), so no functional index on them. Use
   `prefix_of()` and range bounds for index-assisted queries, as `%` does.
-- Additive: a 2.1.0 upgrade script, no change to stored values or the binary format.
-- `postal_code_pattern_check()` returns the plain regex as today and the named form separately.
+- The compiled formats' parts are in the table `postal_code_format_parts` (GB, US, CA, IE, BR); FR, CZ and LU have none.
+- `add_country_template()` runs the ambiguity check and relabels or versions as above.
+- Additive: a 2.1.0 upgrade script, no change to stored values or the binary format. Rehearsed on a copy of
+  production: 72 ms, 21 million postcodes unchanged. Dump and restore tested with named patterns.
+- `postal_code_pattern_check()` returns the regex as before (names included).
 
 ## The GB naming problem
 

@@ -2,10 +2,44 @@
 
 ## 2.1.0 (not yet released)
 
-* **`to_char(postcode, text)` is deprecated.** It keeps working unchanged and will not be removed within 2.x,
-  but it is not a sensible way to take a code apart (its `A D S W` letters give pieces, not Royal Mail's
-  district and sector). Its replacement is `part()` / `prefix_of()`; the upgrade script marks the function with a
-  `COMMENT` saying so. No run-time warning: the function is used in queries, and a warning per call would flood logs.
+**Upgrading from 2.0.x or 1.3.x:** `ALTER EXTENSION postcode UPDATE;`. Nothing stored changes; 2.1.0 only adds. (A rehearsal on a copy of the production database took 72 ms and left 21 million postcodes bit-for-bit identical.)
+
+**New: named parts.** A pattern can name the parts of a code, `(?<name>...)`, and the parts can be read back:
+
+    SELECT add_country_template('XQ', '/(?<major>\d{2})-(?<minor>\d{3})/');
+    SELECT part('XQ-12-345', 'major');               -- 12
+    SELECT parts('XQ-12-345');                       -- {"major": "12", "minor": "345"}
+    SELECT prefix_of('XQ-12-345', 'major');          -- the range of every code that starts XQ-12
+
+* `part(code, name)` is the piece of text; `prefix_of(code, name)` is everything up to and including it, as a
+  `postal_code_range` (indexable, groupable, usable with `<@`). For GB these are the pieces `area`, `district`,
+  `sector` and `walk` (as `to_char` names them) and Royal Mail's levels: `part('GB-SW1A 1AA', 'district')` is `1A`;
+  `prefix_of(..., 'district')` is the range of `GB-SW1A`.
+* `parts(code)` is all of them as `jsonb` (a part the code does not have is null). The view `postal_code_parts`
+  lists the parts each country has, in order. GB, US, CA, IE and BR have parts; FR, CZ and LU have none, and `part()`
+  says so.
+* A name changes nothing about which codes are valid or how they are stored or ranked, so nothing stored is touched.
+* Names are labels, not rules: the same codes written or named differently relabel the current language of a
+  country instead of making a new version (which would make different values), and a language's pattern may be
+  rewritten in place to any pattern that denotes exactly the same codes (`postal_code_same_codes()`, an exact
+  comparison). A different set of codes is still a new version.
+* A pattern whose parts could split some code two ways is refused when it is defined, with an example code. Up to
+  10 million codes every code is tried; above that an exact analysis of the pattern decides (up to 2,000 positions);
+  beyond that a sample is checked and a notice says only some codes were.
+* A part must match at least one character and cannot be repeated (`{2}`); lookbehind is refused. Templates cannot
+  name parts: write a regular expression.
+* `make installcheck` gains a `parts` test; the standalone tests gain the named-parts engine, the ambiguity check,
+  the GB parts against the `postcode` layout's own fields (8.3 million codes) and the US, CA, IE and BR parts
+  against their encoders.
+
+**Deprecated: `to_char(postcode, text)`.** It keeps working unchanged and will not be removed within 2.x, but it is
+not a sensible way to take a code apart (its `A D S W` letters give pieces, not Royal Mail's district and sector).
+Use `part()` / `prefix_of()`. The function carries a `COMMENT` saying so; there is no run-time warning, since it is
+used in queries and a warning per call would flood logs.
+
+* A change that could surprise: re-adding a pattern that denotes the same codes as a country's current,
+  non-built-in language, written differently, now relabels that language; in 2.0.x it made a new version.
+* The error for a statement that is not `(?: )` or `(?<name> )` grouping now mentions named parts.
 
 ## 2.0.1
 
