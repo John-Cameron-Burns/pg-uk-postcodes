@@ -114,7 +114,7 @@ bool pc_pattern_resolve (const char *spec, char *regex, size_t regexlen, char *e
 
 // ---- regular expression -> syntax tree -------------------------------------------------------------------
 
-enum { N_EMPTY, N_SET, N_CAT, N_ALT, N_REP };
+enum { N_EMPTY, N_SET, N_CAT, N_ALT, N_REP, N_CAP };   // N_CAP: a named part, a=child, set=name index
 
 typedef struct { int kind, a, b, min, max, set; } node;
 
@@ -125,6 +125,7 @@ typedef struct {
    cset       *sets;   int nsets, caps;
    char       *err;    size_t errlen;
    bool        failed;
+   char        names[PC_PAT_MAX_NAMES][PC_PAT_NAME_LEN];  int nnames;
 } parser;
 
 static int perr (parser *ps, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -215,18 +216,75 @@ static int parse_class (parser *ps) {                          // after '['
    return si < 0 ? -1 : newnode(ps, N_SET, 0, 0, 0, 0, si);
 }
 
+static bool has_cap (const parser *ps, int n) {
+   const node *nd = &ps->nodes[n];
+   switch (nd->kind) {
+   case N_CAP: return true;
+   case N_CAT: case N_ALT: return has_cap(ps, nd->a) || has_cap(ps, nd->b);
+   case N_REP: return has_cap(ps, nd->a);
+   }
+   return false;
+}
+
+static bool nullable (const parser *ps, int n) {
+   const node *nd = &ps->nodes[n];
+   switch (nd->kind) {
+   case N_EMPTY: return true;
+   case N_CAT:   return nullable(ps, nd->a) && nullable(ps, nd->b);
+   case N_ALT:   return nullable(ps, nd->a) || nullable(ps, nd->b);
+   case N_REP:   return nd->min == 0 || nullable(ps, nd->a);
+   case N_CAP:   return nullable(ps, nd->a);
+   }
+   return false;
+}
+
+// after "(?<": a name, [a-z][a-z0-9_]*, then ">". Returns its index.
+static int parse_name (parser *ps) {
+   char name[PC_PAT_NAME_LEN];
+   int n = 0;
+   while (peek(ps) >= 0 && peek(ps) != '>') {
+      int c = peek(ps);
+      bool ok = (c >= 'a' && c <= 'z') || (n > 0 && ((c >= '0' && c <= '9') || c == '_'));
+      if (!ok) return perr(ps, "a part name is a lower case letter followed by lower case letters, digits or _");
+      if (n >= PC_PAT_NAME_LEN - 1) return perr(ps, "a part name is at most %d characters", PC_PAT_NAME_LEN - 1);
+      name[n++] = (char) c;
+      ps->pos++;
+   }
+   if (peek(ps) != '>') return perr(ps, "missing \">\" after the part name");
+   ps->pos++;
+   name[n] = '\0';
+   if (!n) return perr(ps, "a part needs a name: (?<name>...)");
+   for (int i = 0; i < ps->nnames; i++)
+      if (strcmp(ps->names[i], name) == 0) return perr(ps, "the part name \"%s\" is used twice", name);
+   if (ps->nnames >= PC_PAT_MAX_NAMES) return perr(ps, "a pattern has at most %d named parts", PC_PAT_MAX_NAMES);
+   strcpy(ps->names[ps->nnames], name);
+   return ps->nnames++;
+}
+
 static int parse_atom (parser *ps, int depth) {
    int c = peek(ps);
    if (c == '(') {
       ps->pos++;
+      int cap = -1;
       if (peek(ps) == '?') {
          if (ps->pos + 1 < ps->end && ps->s[ps->pos + 1] == ':') ps->pos += 2;
-         else return perr(ps, "only (?: ) grouping is supported, not lookahead or other (?...) forms");
+         else if (ps->pos + 1 < ps->end && ps->s[ps->pos + 1] == '<') {
+            if (ps->pos + 2 < ps->end && (ps->s[ps->pos + 2] == '=' || ps->s[ps->pos + 2] == '!'))
+               return perr(ps, "lookbehind is not supported; a named part is written (?<name>...)");
+            ps->pos += 2;
+            cap = parse_name(ps);
+            if (cap < 0) return -1;
+         }
+         else return perr(ps, "only (?: ) grouping and (?<name> ) named parts are supported, not lookahead or other (?...) forms");
       }
       int n = parse_alt(ps, depth + 1);
       if (n < 0) return -1;
       if (peek(ps) != ')') return perr(ps, "missing \")\"");
       ps->pos++;
+      if (cap >= 0) {
+         if (nullable(ps, n)) return perr(ps, "the part \"%s\" can match nothing; a named part must match at least one character", ps->names[cap]);
+         n = newnode(ps, N_CAP, n, 0, 0, 0, cap);
+      }
       return n;
    }
    if (c == '[') { ps->pos++; return parse_class(ps); }
@@ -286,6 +344,7 @@ static int parse_quant (parser *ps, int atom) {
          ps->pos++;
          if (hi < lo) return perr(ps, "{%d,%d}: the maximum is below the minimum", lo, hi);
          if (hi == 0) return perr(ps, "{0} repeats nothing");
+         if (hi > 1 && has_cap(ps, atom)) return perr(ps, "a named part cannot be repeated (it would match more than once); only ? is allowed on it");
          atom = newnode(ps, N_REP, atom, 0, lo, hi, 0);
       }
       else if (c == '*' || c == '+') return perr(ps, "\"%c\" would allow codes of any length; use {m,n} (at most %d)", c, PC_PAT_MAX_LEN);
@@ -325,7 +384,8 @@ static int parse_alt (parser *ps, int depth) {
 
 // ---- syntax tree -> NFA ------------------------------------------------------------------------------------
 
-typedef struct { int8_t kind; int set, out, out1; } nstate;        // kind 0: a character; 1: either of two; 2: match
+typedef struct { int8_t kind; int set, out, out1; } nstate;        // kind 0: a character; 1: either of two; 2: match;
+                                                                   // 3, 4: a named part (index in set) starts / ends -- no input consumed
 
 typedef struct { nstate *st; int n, cap; bool failed; } nfa;
 
@@ -355,6 +415,7 @@ static int build (nfa *f, const node *nodes, int n, int next) {
    case N_SET:   return nnew(f, 0, nd->set, next, -1);
    case N_CAT:   { int b = build(f, nodes, nd->b, next); return build(f, nodes, nd->a, b); }
    case N_ALT:   { int a = build(f, nodes, nd->a, next), b = build(f, nodes, nd->b, next); return nnew(f, 1, 0, a, b); }
+   case N_CAP:   { int cl = nnew(f, 4, nd->set, next, -1); int ch = build(f, nodes, nd->a, cl); return nnew(f, 3, nd->set, ch, -1); }
    case N_REP:   {
       int cur = next;
       for (int i = 0; i < nd->max - nd->min; i++) {                // the optional copies, innermost first
@@ -386,6 +447,7 @@ static void closure (closure_ctx *c, int s, int *out, int *nout) {
       c->stamp[x] = c->curstamp;
       const nstate *st = &c->f->st[x];
       if (st->kind == 1) { c->stack[sp++] = st->out; c->stack[sp++] = st->out1; }
+      else if (st->kind == 3 || st->kind == 4) c->stack[sp++] = st->out;          // a named part's edge: a pass-through
       else out[(*nout)++] = x;
    }
 }
@@ -685,4 +747,307 @@ uint64_t pc_pattern_outcode (const pc_pattern *p, uint64_t rank) {
       s = p->next[(size_t) s * NCH + ci];
    }
    return rank;
+}
+
+// ---- named parts -------------------------------------------------------------------------------------------------
+
+struct pc_parts {
+   int     nnames;
+   char    names[PC_PAT_MAX_NAMES][PC_PAT_NAME_LEN];
+   int     nstates, nsets, start;
+   nstate *st;
+   cset   *sets;
+};
+
+pc_parts *pc_parts_compile (const char *regex, pc_alloc_fn alloc, char *err, size_t errlen) {
+   parser ps;
+   memset(&ps, 0, sizeof ps);
+   ps.s = regex; ps.err = err; ps.errlen = errlen;
+   ps.end = (int) strlen(regex);
+   if (ps.end == 0) { fail(err, errlen, "a pattern cannot be empty"); return NULL; }
+   if (regex[0] == '^') ps.pos = 1;
+   if (ps.end > ps.pos && regex[ps.end - 1] == '$' && (ps.end < 2 || regex[ps.end - 2] != '\\')) ps.end--;
+
+   pc_parts *result = NULL;
+   nfa f;
+   memset(&f, 0, sizeof f);
+   int root = parse_alt(&ps, 0);
+   if (root >= 0 && ps.pos != ps.end) root = perr(&ps, "\")\" without a \"(\"");
+   if (root >= 0) {
+      int match = nnew(&f, 2, 0, -1, -1);
+      int start = build(&f, ps.nodes, root, match);
+      if (f.failed) fail(err, errlen, "pattern is too large");
+      else {
+         pc_parts *r = alloc(sizeof *r);
+         nstate *st = alloc(sizeof(nstate) * (size_t) f.n);
+         cset *sets = alloc(sizeof(cset) * (size_t) (ps.nsets ? ps.nsets : 1));
+         if (!r || !st || !sets) fail(err, errlen, "out of memory");
+         else {
+            memcpy(st, f.st, sizeof(nstate) * (size_t) f.n);
+            if (ps.nsets) memcpy(sets, ps.sets, sizeof(cset) * (size_t) ps.nsets);
+            r->nnames = ps.nnames;
+            memcpy(r->names, ps.names, sizeof r->names);
+            r->nstates = f.n; r->nsets = ps.nsets; r->start = start; r->st = st; r->sets = sets;
+            result = r;
+         }
+      }
+   }
+   free(ps.nodes); free(ps.sets); free(f.st);
+   return result;
+}
+
+int pc_parts_count (const pc_parts *p) { return p->nnames; }
+const char *pc_parts_name (const pc_parts *p, int i) { return p->names[i]; }
+
+#define PARTS_MAX_STEPS 200000
+
+typedef struct {
+   const pc_parts *p;
+   const char     *text;
+   int             len;
+   int             s[PC_PAT_MAX_NAMES], e[PC_PAT_MAX_NAMES];
+   int             fs[PC_PAT_MAX_NAMES], fe[PC_PAT_MAX_NAMES];
+   bool            all, have_first, ambiguous, blown;
+   long            steps;
+} mctx;
+
+// Backtracking over the NFA, which already lists the preferred branch first (the first of an alternation,
+// the taken branch of an optional or repeated part). In `all` mode it explores every way to match instead.
+static bool nm (mctx *m, int s, int pos) {
+   if (++m->steps > PARTS_MAX_STEPS) { m->blown = true; return true; }
+   const nstate *q = &m->p->st[s];
+   switch (q->kind) {
+   case 0: {
+      if (pos >= m->len) return false;
+      int c = upcase((unsigned char) m->text[pos]) - PC_PAT_FIRST;
+      if (c < 0 || c >= NCH || !set_has(&m->p->sets[q->set], c)) return false;
+      return nm(m, q->out, pos + 1);
+   }
+   case 1: return nm(m, q->out, pos) || nm(m, q->out1, pos);
+   case 2:
+      if (pos != m->len) return false;
+      if (!m->all) return true;
+      if (!m->have_first) {
+         memcpy(m->fs, m->s, sizeof m->s); memcpy(m->fe, m->e, sizeof m->e);
+         m->have_first = true;
+      }
+      else if (memcmp(m->fs, m->s, sizeof m->s) || memcmp(m->fe, m->e, sizeof m->e)) m->ambiguous = true;
+      return m->ambiguous;
+   case 3: {
+      int os = m->s[q->set], oe = m->e[q->set];
+      m->s[q->set] = pos; m->e[q->set] = -1;
+      if (nm(m, q->out, pos)) return true;
+      m->s[q->set] = os; m->e[q->set] = oe;
+      return false;
+   }
+   case 4: {
+      int oe = m->e[q->set];
+      m->e[q->set] = pos;
+      if (nm(m, q->out, pos)) return true;
+      m->e[q->set] = oe;
+      return false;
+   }
+   }
+   return false;
+}
+
+static void mctx_init (mctx *m, const pc_parts *p, const char *text, bool all) {
+   memset(m, 0, sizeof *m);
+   m->p = p; m->text = text; m->len = (int) strlen(text); m->all = all;
+   for (int i = 0; i < PC_PAT_MAX_NAMES; i++) m->s[i] = m->e[i] = m->fs[i] = m->fe[i] = -1;
+}
+
+int pc_parts_match (const pc_parts *p, const char *text, int *start, int *end) {
+   mctx m;
+   mctx_init(&m, p, text, false);
+   bool ok = nm(&m, p->start, 0);
+   if (m.blown) return -1;
+   if (!ok) return 0;
+   for (int i = 0; i < p->nnames; i++) { start[i] = m.s[i]; end[i] = m.s[i] < 0 ? -1 : m.e[i]; }
+   return 1;
+}
+
+int pc_parts_ambiguous (const pc_parts *p, const char *text) {
+   mctx m;
+   mctx_init(&m, p, text, true);
+   nm(&m, p->start, 0);
+   if (m.blown) return -1;
+   return m.ambiguous ? 1 : 0;
+}
+
+void pc_pattern_strip_names (const char *regex, char *out) {
+   bool in_class = false;
+   const char *r = regex;
+   char *o = out;
+   while (*r) {
+      if (*r == '\\' && r[1]) { *o++ = *r++; *o++ = *r++; continue; }
+      if (in_class) { if (*r == ']') in_class = false; *o++ = *r++; continue; }
+      if (*r == '[') { in_class = true; *o++ = *r++; if (*r == '^') *o++ = *r++; if (*r == ']') *o++ = *r++; continue; }
+      if (r[0] == '(' && r[1] == '?' && r[2] == '<' && r[3] != '=' && r[3] != '!') {
+         const char *e = strchr(r, '>');
+         if (e) { *o++ = '('; *o++ = '?'; *o++ = ':'; r = e + 1; continue; }
+      }
+      *o++ = *r++;
+   }
+   *o = '\0';
+}
+
+// ---- is the split unique? ----------------------------------------------------------------------------------------
+
+int pc_parts_check_exhaustive (const pc_parts *p, const pc_pattern *pat, char *msg, size_t msglen) {
+   if (pat->total > PC_PARTS_EXHAUSTIVE_MAX) return -1;
+   char text[PC_PAT_MAX_LEN + 1];
+   for (uint64_t r = 0; r < pat->total; r++) {
+      if (pc_pattern_render(pat, r, text) < 0) continue;
+      int a = pc_parts_ambiguous(p, text);
+      if (a < 0) { snprintf(msg, msglen, "too complex to split \"%s\"", text); return -1; }
+      if (a == 1) { snprintf(msg, msglen, "%s", text); return 1; }
+   }
+   return 0;
+}
+
+// Static analysis. A "position" is a place in the pattern between characters: a state that wants a character, or
+// the match state. From a position, a character leads to the next stretch of pattern, which is walked through
+// (alternatives, optional bits, part boundaries) to reach the next position; the part boundaries met on the way
+// are that step's "gap". Two paths over the same text put the parts differently exactly when, at some step, their
+// gaps differ. So: search pairs of positions reachable together, remembering whether the paths have already
+// diverged; the pattern is ambiguous if a pair of match states is reached after diverging.
+
+typedef struct { int pos; unsigned char n; unsigned char m[2 * PC_PAT_MAX_NAMES]; } gapent;
+typedef struct { gapent *e; int n; } gaplist;
+
+#define GAP_MAX 256
+
+static bool gap_walk (const pc_parts *p, const int *posid, int s, gapent *cur, gaplist *out, bool *toobig, int depth) {
+   if (depth > 4000) { *toobig = true; return false; }
+   const nstate *q = &p->st[s];
+   switch (q->kind) {
+   case 0: case 2: {
+      cur->pos = posid[s];
+      for (int i = 0; i < out->n; i++)
+         if (out->e[i].pos == cur->pos && out->e[i].n == cur->n && memcmp(out->e[i].m, cur->m, cur->n) == 0) return true;
+      if (out->n >= GAP_MAX) { *toobig = true; return false; }
+      out->e = realloc(out->e, sizeof(gapent) * (size_t) (out->n + 1));
+      if (!out->e) { *toobig = true; return false; }
+      out->e[out->n++] = *cur;
+      return true;
+   }
+   case 1: return gap_walk(p, posid, q->out, cur, out, toobig, depth + 1) && gap_walk(p, posid, q->out1, cur, out, toobig, depth + 1);
+   case 3: case 4: {
+      gapent c = *cur;
+      c.m[c.n++] = (unsigned char) (q->set * 2 + (q->kind == 4));
+      return gap_walk(p, posid, q->out, &c, out, toobig, depth + 1);
+   }
+   }
+   return true;
+}
+
+int pc_parts_check_static (const pc_parts *p, char *msg, size_t msglen) {
+   int *posid = malloc(sizeof(int) * (size_t) p->nstates);
+   int *posst = malloc(sizeof(int) * (size_t) p->nstates);
+   if (!posid || !posst) { free(posid); free(posst); return -1; }
+   int n = 0;
+   for (int s = 0; s < p->nstates; s++) {
+      posid[s] = -1;
+      if (p->st[s].kind == 0 || p->st[s].kind == 2) { posid[s] = n; posst[n++] = s; }
+   }
+   int result = -1;
+   gaplist *gaps = NULL;
+   uint8_t *seen = NULL;
+   int32_t *parent = NULL;
+   uint8_t *pch = NULL;
+   int32_t *queue = NULL;
+   gaplist start = { NULL, 0 };
+   if (n > PC_PARTS_STATIC_MAX_POSITIONS) goto done;
+
+   gaps = calloc((size_t) n, sizeof *gaps);                      // the gap after consuming at each position, built on first use
+   size_t cells = (size_t) n * (size_t) n * 2;
+   seen = calloc((cells + 7) / 8, 1);
+   parent = malloc(sizeof(int32_t) * cells);
+   pch = malloc(cells);
+   queue = malloc(sizeof(int32_t) * cells);
+   if (!gaps || !seen || !parent || !pch || !queue) goto done;
+
+   bool toobig = false;
+   gapent z; memset(&z, 0, sizeof z);
+   if (!gap_walk(p, posid, p->start, &z, &start, &toobig, 0) || toobig) goto done;
+
+   size_t qh = 0, qt = 0;
+   int found = -1;
+   #define CELL(a, b, d) (((size_t) (a) * (size_t) n + (size_t) (b)) * 2 + (size_t) (d))
+   #define SEEN(c) ((seen[(c) >> 3] >> ((c) & 7)) & 1)
+   #define MARK(c) (seen[(c) >> 3] |= (uint8_t) (1u << ((c) & 7)))
+   for (int i = 0; i < start.n; i++)
+      for (int j = 0; j < start.n; j++) {
+         int d = !(start.e[i].n == start.e[j].n && memcmp(start.e[i].m, start.e[j].m, start.e[i].n) == 0);
+         size_t c = CELL(start.e[i].pos, start.e[j].pos, d);
+         if (SEEN(c)) continue;
+         MARK(c); parent[c] = -1; pch[c] = 0; queue[qt++] = (int32_t) c;
+      }
+   while (qh < qt && found < 0) {
+      size_t c = (size_t) queue[qh++];
+      int d = (int) (c & 1);
+      size_t ab = c >> 1;
+      int a = (int) (ab / (size_t) n), b = (int) (ab % (size_t) n);
+      const nstate *qa = &p->st[posst[a]], *qb = &p->st[posst[b]];
+      if (qa->kind == 2 && qb->kind == 2) { if (d) found = (int) c; continue; }
+      if (qa->kind == 2 || qb->kind == 2) continue;             // one path has ended and the other has not
+      int ch = -1;
+      for (int k = 0; k < NCH; k++) if (set_has(&p->sets[qa->set], k) && set_has(&p->sets[qb->set], k)) { ch = k; break; }
+      if (ch < 0) continue;
+      if (!gaps[a].e) {
+         gapent g0; memset(&g0, 0, sizeof g0);
+         gaps[a].n = 0;
+         if (!gap_walk(p, posid, qa->out, &g0, &gaps[a], &toobig, 0) || toobig) goto done;
+      }
+      if (!gaps[b].e) {
+         gapent g0; memset(&g0, 0, sizeof g0);
+         gaps[b].n = 0;
+         if (!gap_walk(p, posid, qb->out, &g0, &gaps[b], &toobig, 0) || toobig) goto done;
+      }
+      for (int i = 0; i < gaps[a].n; i++)
+         for (int j = 0; j < gaps[b].n; j++) {
+            const gapent *x = &gaps[a].e[i], *y = &gaps[b].e[j];
+            int nd = d || !(x->n == y->n && memcmp(x->m, y->m, x->n) == 0);
+            size_t nc = CELL(x->pos, y->pos, nd);
+            if (SEEN(nc)) continue;
+            MARK(nc); parent[nc] = (int32_t) c; pch[nc] = (uint8_t) ch; queue[qt++] = (int32_t) nc;
+         }
+   }
+   if (found < 0) { result = 0; goto done; }
+   {
+      char rev[PC_PAT_MAX_LEN * 4 + 8];
+      int len = 0;
+      for (int32_t c = found; c >= 0 && parent[c] >= 0 && len < (int) sizeof rev - 1; c = parent[c]) rev[len++] = (char) (pch[c] + PC_PAT_FIRST);
+      for (int i = 0; i < len / 2; i++) { char t = rev[i]; rev[i] = rev[len - 1 - i]; rev[len - 1 - i] = t; }
+      rev[len] = '\0';
+      snprintf(msg, msglen, "%s", rev);
+      result = 1;
+   }
+done:
+   if (gaps) { for (int i = 0; i < n; i++) free(gaps[i].e); }
+   free(gaps); free(start.e); free(seen); free(parent); free(pch); free(queue); free(posid); free(posst);
+   return result;
+   #undef CELL
+   #undef SEEN
+   #undef MARK
+}
+
+int pc_parts_check (const pc_parts *p, const pc_pattern *pat, char *msg, size_t msglen) {
+   msg[0] = '\0';
+   int r = pc_parts_check_exhaustive(p, pat, msg, msglen);
+   if (r == 0) return PC_CHECK_UNAMBIGUOUS;
+   if (r == 1) return PC_CHECK_AMBIGUOUS;
+   r = pc_parts_check_static(p, msg, msglen);
+   if (r == 0) return PC_CHECK_UNAMBIGUOUS;
+   if (r == 1) return PC_CHECK_AMBIGUOUS;
+   uint64_t n = PC_PARTS_SAMPLE, step = pat->total / n ? pat->total / n : 1, done = 0;
+   char text[PC_PAT_MAX_LEN + 1];
+   for (uint64_t k = 0, rk = 0; k < n && rk < pat->total; k++, rk += step) {
+      if (pc_pattern_render(pat, rk, text) < 0) continue;
+      done++;
+      if (pc_parts_ambiguous(p, text) == 1) { snprintf(msg, msglen, "%s", text); return PC_CHECK_AMBIGUOUS; }
+   }
+   snprintf(msg, msglen, "checked %llu of %llu codes", (unsigned long long) done, (unsigned long long) pat->total);
+   return PC_CHECK_PARTIAL;
 }

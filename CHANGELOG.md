@@ -1,5 +1,12 @@
 # Changes
 
+## 2.1.0 (not yet released)
+
+* **`to_char(postcode, text)` is deprecated.** It keeps working unchanged and will not be removed within 2.x,
+  but it is not a sensible way to take a code apart (its `A D S W` letters give pieces, not Royal Mail's
+  district and sector). Its replacement is `part()` / `prefix_of()`; the upgrade script marks the function with a
+  `COMMENT` saying so. No run-time warning: the function is used in queries, and a warning per call would flood logs.
+
 ## 2.0.1
 
 **Upgrading from 2.0.0 or 1.3.x:** `ALTER EXTENSION postcode UPDATE;`

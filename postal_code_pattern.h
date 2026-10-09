@@ -45,6 +45,8 @@
 #define PC_PAT_MAX_STATES  2048      // states in the compiled automaton
 #define PC_PAT_FIRST       0x20      // the characters a code may contain: 0x20 .. 0x7E
 #define PC_PAT_NCHAR       95
+#define PC_PAT_MAX_NAMES   16        // named parts in one pattern
+#define PC_PAT_NAME_LEN    33        // a part name: up to 32 characters
 
 typedef struct {
    uint64_t  total;                  // number of codes: ranks 0 .. total-1 are valid
@@ -83,5 +85,54 @@ bool pc_pattern_range (const pc_pattern *p, const char *prefix, uint64_t *lo, ui
 // The SHORTEST shorter code this one extends ("12345" for "12345-6789"; "100" for "100-123", which also extends
 // "100-12"), or the code itself if there is none. The shortest, so that an outcode is its own outcode.
 uint64_t pc_pattern_outcode (const pc_pattern *p, uint64_t rank);
+
+// ---- named parts ---------------------------------------------------------------------------------------------
+// (?<name>...) in a pattern names a part of the code. A name never changes WHICH codes are valid, or how they are
+// ranked and stored: the automaton above passes straight through it. It only says where in a code the part is.
+//
+// A part must match at least one character, and cannot be repeated ({2,3}, only ? is allowed on it). Which text a
+// part gets, when the pattern could split a code more than one way, is decided as a backtracking matcher
+// would: the first alternative that lets the whole code match, and as much as possible for a repeat or an
+// optional part. pc_parts_ambiguous() tells whether any code is split two ways, so that can be refused when a
+// pattern is defined.
+typedef struct pc_parts pc_parts;
+
+// Compiles the part structure of a regular expression (names included). NULL and a message if it is invalid.
+pc_parts *pc_parts_compile (const char *regex, pc_alloc_fn alloc, char *err, size_t errlen);
+int         pc_parts_count (const pc_parts *p);
+const char *pc_parts_name  (const pc_parts *p, int i);                  // in the order they appear in the pattern
+
+// Splits the canonical text of a code. 1: done; 0: the text is not a code; -1: too complex to decide.
+// start[i], end[i] (end exclusive) are the part's text, or -1, -1 if the part is not in this code (an
+// optional part that is absent, or the other branch of an alternation).
+int pc_parts_match (const pc_parts *p, const char *text, int *start, int *end);
+
+// 1 if the text can be split into its parts in two or more different ways; 0 if one; -1 too complex to decide.
+int pc_parts_ambiguous (const pc_parts *p, const char *text);
+
+// The regular expression without its names: (?<name> becomes (?: -- the plain pattern, for anything that
+// does not know about names. `out` must hold strlen(regex) + 1.
+void pc_pattern_strip_names (const char *regex, char *out);
+
+// ---- is the split of a code into its parts unique? -----------------------------------------------------------
+// A pattern whose parts could be assigned two ways to some code is refused when it is defined. Three tiers:
+//   1. up to PC_PARTS_EXHAUSTIVE_MAX codes: every code is tried;
+//   2. more codes, but at most PC_PARTS_STATIC_MAX_POSITIONS places in the pattern: an exact analysis of the pattern
+//      itself (two paths through it that put the part boundaries differently over the same text), whatever the size;
+//   3. otherwise: PC_PARTS_SAMPLE codes spread through the pattern. This can miss an ambiguity, so the result
+//      is PC_CHECK_PARTIAL and says how many codes were looked at.
+#define PC_PARTS_EXHAUSTIVE_MAX        10000000ULL
+#define PC_PARTS_STATIC_MAX_POSITIONS  2000
+#define PC_PARTS_SAMPLE                200000ULL
+
+enum { PC_CHECK_UNAMBIGUOUS = 0, PC_CHECK_AMBIGUOUS = 1, PC_CHECK_PARTIAL = 2, PC_CHECK_ERROR = -1 };
+
+// Each returns 0 (unique), 1 (ambiguous: `msg` has a code that splits two ways), or -1 (not possible: too big).
+int pc_parts_check_exhaustive (const pc_parts *p, const pc_pattern *pat, char *msg, size_t msglen);
+int pc_parts_check_static (const pc_parts *p, char *msg, size_t msglen);
+
+// The tiers in order. PC_CHECK_UNAMBIGUOUS and PC_CHECK_AMBIGUOUS are certain; PC_CHECK_PARTIAL means
+// nothing was found in a sample (msg says how many codes of how many).
+int pc_parts_check (const pc_parts *p, const pc_pattern *pat, char *msg, size_t msglen);
 
 #endif

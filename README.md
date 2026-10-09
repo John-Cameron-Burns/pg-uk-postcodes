@@ -48,6 +48,13 @@ single space between the outcode and incode. If an alternative format is
 required a to_char() function is provided. The default output is equivalent
 to calling to_char(postcode, 'AD SW');
 
+**`to_char(postcode, text)` is deprecated** (from 2.1; it still works and will not be removed within 2.x). Cutting
+a postcode up by format letters is not a sensible way to get at its parts. `A`, `D`, `S` and `W` give the
+*pieces* (`EC`, `4Y`, `0`, `HQ`), which is not what Royal Mail calls the district or the sector, and a
+format string cannot say so. Use the named parts of `postal_code` instead: `part(pc, 'area')`, `part(pc, 'district')`,
+`part(pc, 'sector')` and `part(pc, 'walk')` for the pieces, and `prefix_of(pc, 'district')` for Royal Mail's
+cumulative levels (`EC4Y`, `EC4Y 0`, ...). To render the text form, use `::text`.
+
 Rendering never fails as of 1.3.3. A field that isn't a valid, complete
 value -- which in practice means a range_lower()/range_upper() boundary
 from a fragment short enough to leave something genuinely unfillable, or
