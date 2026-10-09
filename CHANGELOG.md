@@ -48,6 +48,14 @@ used in queries and a warning per call would flood logs.
 * A change that could surprise: re-adding a pattern that denotes the same codes as a country's current language,
   written differently, no longer makes a new version (which made different values). For your own language it relabels it;
   for a built-in language it says so in a NOTICE and keeps it. The very spec a language was made from is still silent, as in 2.0.x.
+* **New: schemes defined by a list of codes.** `add_country_list(cc, codes[], parts)` and `add_country_list_from(cc, query, parts)`
+  give a scheme (SIC, SOC, NUTS, ICD-10) as the list of its codes. It is a language like any other -- the same ranks, prefix ranges,
+  column locks and named parts -- built straight from the codes as the smallest automaton for them, so a list is not limited by the
+  size of a pattern: tens of thousands of codes, 2.6 to 3.1 times fewer states than the same codes as a pattern. The README has
+  a worked example. The codes are in a new table, `postal_code_list_codes` (permanent, dumped), and `postal_code_languages` gains `kind`
+  and `parts_pattern`. The same codes written as a list or as a pattern are one language, so nothing makes a second version of them.
+  The new library keeps working against the tables of 2.0.1 until `ALTER EXTENSION ... UPDATE` is run (tested: the rollout installs
+  the library first).
 * **Fixed: a use-after-free when compiling a large pattern** (present since 2.0.0). The compiler kept a pointer into an array
   that it then grew, so after a reallocation it read freed memory. On glibc the freed block still held the right data and the
   pattern came out right; on macOS the real SIC 2007 list, written out as a pattern, came out with 34 of its 729 codes

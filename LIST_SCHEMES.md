@@ -1,7 +1,7 @@
 # Schemes defined by a list of codes
 
-Status: **the engine part is built and tested; the SQL layer is a proposal.** Branch `feat/list-schemes` (on top of
-`fix/dfa-use-after-free`, pull request 5).
+Status: **built: the engine and the SQL layer** (`add_country_list`, `add_country_list_from`; the README has the usage). The
+SQL layer is described under "As built" below.
 
 ## Why
 
@@ -47,21 +47,31 @@ printable, at most 40 characters), each with the position of the offending code 
 * **Codes only.** A list has no regular expression, so no named parts from the pattern. Parts for a list would be a parts-only
   pattern or fixed widths (SIC: 2, 1, 1, 1), the way the compiled formats do it.
 
-## Proposal for the SQL layer (not built)
+## As built (the SQL layer)
 
-```sql
-SELECT add_country_list('XS', ARRAY['01110','01120', ...]);               -- or
-SELECT add_country_list('XS', 'SELECT sic FROM "@SIC"._sic2007_ons ...');    -- from a query
-```
+* `postal_code_languages` gains `kind` ('pattern' or 'list') and `parts_pattern`; a list's `pattern` is empty and `source` says
+  "list of N codes". Its codes are in `postal_code_list_codes (iso2, version, code COLLATE "C")`, permanent like languages, dumped with
+  the database. **No foreign key** between them: a restore may load the two in either order.
+* `pc_language_for` loads a list's codes in byte order and builds the automaton with `pc_pattern_from_list`, once per backend. It reads
+  `kind` through `to_jsonb(l)`, so the new library still works against the old table layout (which has no such column) in the time
+  between installing it and `ALTER EXTENSION UPDATE` (tested with a database at 2.0.1).
+* **Parts of a list** are a pattern of their own, stored bare in `parts_pattern` (given between slashes, like a template), because a
+  list has no pattern to name them in. It must accept every code in the list and split each a single way: checked on the codes
+  themselves, all of them, not on every code the pattern could denote.
+* **Versions.** The same codes never make a new version (exact comparison against whatever the current language is, pattern or list,
+  by `postal_code_language_denotes_list` / `_pattern`); a different list is the next version; a list's parts can be changed in place
+  (the trigger allows nothing else), a pattern can still be rewritten to one denoting the same codes. A pattern and a list that denote
+  the same codes are one language, whichever came first (a notice for the second).
+* **Refusals**, each with the item at fault: empty, over 40 characters, lower case, non-ASCII, repeated (named plainly, since the
+  function sorts for you), NULL, no codes at all, more than 32,767 states, a parts pattern that names nothing, does not accept every
+  code, or splits one two ways.
 
-* A table of the codes, `postal_code_list_codes(iso2, version, code)`, permanent like `postal_code_languages` (its rows are what
-  stored values are decoded with), dumped with the database. `postal_code_languages` gains a `kind` ('pattern' or 'list');
-  for a list `pattern` is unused.
-* `pc_language_for` loads the codes in byte order, builds the automaton once per backend, and caches it as now.
-* The rules carry over: the same codes never make a new version (the exact comparison works on any two automata); a different
-  list is the next version; a built-in is never edited. Editions of a classification (SIC 2003, 2007) are separate schemes.
-* `add_country_list` checks the list as `pc_pattern_from_list` does and says where it is wrong; a list from a query is sorted for
-  you.
-* **Open:** the shape of parts for a list; whether to reserve the user-assigned codes (AA, QM-QZ, XA-XZ, ZZ: 42 in all) or move
-  to the one-type-per-scheme design discussed earlier, where this engine is the shared part; the restore-ordering caveat (the
-  codes table must be loaded before the data, as for languages).
+### Measured while building it
+* 31,000 pseudo-random 5-digit codes: built in about 20 ms on first use, 40 microseconds per `postal_prefix()` call afterwards.
+* The regression test originally took 76 seconds because of how it was written, not the feature: a CTE used once is folded into
+  the query by PostgreSQL, which re-evaluated `postal_prefix(...)` for every row pair (310,000 times). `AS MATERIALIZED` fixed it (3.7 s).
+
+### Not done
+* Sparse tables (about 1 KB per state is dense), or 32-bit transitions to lift the 32,767-state limit.
+* One type per scheme (small storage, type-safe comparisons); this engine would be its shared part.
+* Loading the real SIC/SOC lists: a one-line call to `add_country_list_from` from whatever table holds them.

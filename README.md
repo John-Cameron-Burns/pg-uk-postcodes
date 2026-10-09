@@ -473,6 +473,57 @@ been the same.
   different values). `add_country_template()` relabels your current language; a built-in one is kept as it is.
 * A template (`NN-NNN`) cannot name parts; write the regular expression.
 
+### Schemes defined by a list of codes
+
+A scheme whose valid codes are a published list -- SIC, SOC, NUTS, ICD-10 -- is best given to the extension as that list.
+`postal_code` then validates against exactly those codes, ranks them in byte order, and gives prefix ranges and indexes as
+for any country. It is built straight from the codes, as the smallest automaton for them, so there is no pattern text and
+none of a pattern's limits: a list of tens of thousands of codes is fine (70,000 ICD-10-like codes take about 6 MB and 3 ms
+to build).
+
+**1. Define the scheme.** Pick a two-letter code that is not a country (ISO keeps `AA`, `QM`-`QZ`, `XA`-`XZ` and `ZZ` for
+private use), and give it the codes, as an array or from a query:
+
+    SELECT add_country_list('XS', ARRAY['01110', '01120', '47110', '47190', '47191', '62010']);
+
+    SELECT add_country_list_from('XS',
+       'SELECT code FROM my_sic_2007_codes',                                    -- one column, any order
+       '/(?<division>\d{2})(?<group>\d)(?<class>\d)(?<subclass>\d)/');          -- optional: name the parts
+
+The codes must be upper case printable ASCII, at most 40 characters, and each appears once; the order you give them in does
+not matter. Anything else is refused with the item that is wrong. The optional last argument names the parts of a code (see
+*Named parts*); it only splits, so it may be looser than the list, but it must accept every code in the list and split each one a
+single way. Only the first call needs the codes: calling it again with the same codes changes nothing except the part names.
+
+**2. Use the codes.** A code is written with the scheme in front, like a country, `XS-47110`; a column can be locked to the
+scheme so that anything else is refused, and then takes bare codes with `postal_code()` and with `COPY`:
+
+    CREATE TABLE firms (id bigserial, name text, sic postal_code('XS'));
+    INSERT INTO firms (name, sic) VALUES ('Acme', 'XS-47110');
+    INSERT INTO firms (name, sic) VALUES ('Beta', postal_code('62010', 'XS'));
+    INSERT INTO firms (name, sic) VALUES ('Gamma', 'XS-47112');        -- ERROR: not a code in the list
+    COPY firms (name, sic) FROM stdin;                                 -- bare codes are accepted by COPY: 47190
+
+    SELECT is_valid_postal_code('XS-47110');                           -- true; false for anything not in the list
+    SELECT sic::text FROM firms ORDER BY sic;                          -- in code order
+    SELECT * FROM firms WHERE sic <@ postal_prefix('XS-47');           -- everything in division 47 (an index range scan)
+    SELECT part(sic, 'division'), count(*) FROM firms GROUP BY 1;      -- the piece: 47
+    SELECT prefix_of(sic, 'group'), count(*) FROM firms GROUP BY 1;    -- everything up to the group, as a range you can group by
+
+**3. Change it, carefully.** A scheme's codes are permanent, because stored values are decoded with them. Giving the same
+country a different list makes its next version; values already stored keep the list they were written with. So an *edition*
+of a classification (SIC 2003 and SIC 2007) should be two schemes (`XT` and `XS`), not one scheme with two lists. The codes are
+rows of `postal_code_list_codes`, which cannot be updated or deleted, and are included in `pg_dump`.
+
+* **Limits.** A list whose automaton needs more than 32,767 states is refused (lists whose codes share endings, as real
+  classifications do, use a small fraction of that; 150,000 random 8-digit codes do not fit). No check digits: a code is valid
+  because it is in the list.
+* **Cost.** The automaton is built once per session, the first time the scheme is used (about 20 ms for 31,000 codes) and about
+  1 KB per state is kept. Every call to `postal_prefix()`, `prefix_of()` and the like costs about 40 microseconds, so work a range
+  out once per group, not once per row, in a join: write the CTE `AS MATERIALIZED`, or PostgreSQL will fold it into the query and
+  work it out for every row.
+* **A pattern and a list that denote the same codes are one language**: whichever is given second changes nothing (with a notice).
+
 ### Partial match and ranges
 
 A *fragment* is `CC-` plus a **prefix** of the national code -- `GB-LS24`, `FR-75`,
