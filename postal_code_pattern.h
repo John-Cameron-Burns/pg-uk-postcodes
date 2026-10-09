@@ -114,6 +114,10 @@ int pc_parts_ambiguous (const pc_parts *p, const char *text);
 // does not know about names. `out` must hold strlen(regex) + 1.
 void pc_pattern_strip_names (const char *regex, char *out);
 
+// True if the two patterns denote exactly the same set of codes, however differently they are written or named.
+// (A stored code's meaning depends only on that set, so two such patterns rank every code the same.)
+bool pc_pattern_same_codes (const pc_pattern *a, const pc_pattern *b);
+
 // ---- is the split of a code into its parts unique? -----------------------------------------------------------
 // A pattern whose parts could be assigned two ways to some code is refused when it is defined. Three tiers:
 //   1. up to PC_PARTS_EXHAUSTIVE_MAX codes: every code is tried;

@@ -60,6 +60,10 @@ static bool tr_seq (const char **pp, char *out, size_t cap, int depth, char *err
          if (!*inner) { ok = fail(err, errlen, "an optional part \"[ ]\" is empty"); break; }
          snprintf(piece, sizeof piece, "(%s)?", inner);
          p = q;                                // now at the ']'
+      } else if (c == '(' || c == '<') {
+         ok = fail(err, errlen, "a template cannot name parts of a code; write a regular expression between slashes, "
+                                "e.g. /(?<area>\\d{2})-(?<unit>\\d{3})/");
+         break;
       } else {
          ok = fail(err, errlen, "a template is made of N (a digit), A (a letter), X (a digit or letter), spaces and "
                                 "hyphens, and [ ] around an optional part; for anything else write a regular "
@@ -1050,4 +1054,37 @@ int pc_parts_check (const pc_parts *p, const pc_pattern *pat, char *msg, size_t 
    }
    snprintf(msg, msglen, "checked %llu of %llu codes", (unsigned long long) done, (unsigned long long) pat->total);
    return PC_CHECK_PARTIAL;
+}
+
+// ---- do two patterns denote the same codes? ----------------------------------------------------------------------
+
+// Exactly: walk both automata together from their start states; they denote the same set iff every pair of
+// states reached agrees on whether the text so far is a code, and on which characters can come next. (Edges into
+// states from which no code can be completed were dropped when they were compiled, so "no edge" means "no code".)
+bool pc_pattern_same_codes (const pc_pattern *a, const pc_pattern *b) {
+   if (a->total != b->total || a->maxlen != b->maxlen) return false;
+   size_t cells = (size_t) a->nstates * (size_t) b->nstates;
+   uint8_t *seen = calloc((cells + 7) / 8, 1);
+   int32_t *queue = malloc(sizeof(int32_t) * cells);
+   if (!seen || !queue) { free(seen); free(queue); return false; }
+   size_t qh = 0, qt = 0;
+   bool same = true;
+   queue[qt++] = 0;
+   seen[0] |= 1;
+   while (qh < qt && same) {
+      size_t cell = (size_t) queue[qh++];
+      int s = (int) (cell / (size_t) b->nstates), t = (int) (cell % (size_t) b->nstates);
+      if (a->accept[s] != b->accept[t]) { same = false; break; }
+      for (int c = 0; c < NCH; c++) {
+         int x = a->next[(size_t) s * NCH + c], y = b->next[(size_t) t * NCH + c];
+         if ((x < 0) != (y < 0)) { same = false; break; }
+         if (x < 0) continue;
+         size_t nc = (size_t) x * (size_t) b->nstates + (size_t) y;
+         if ((seen[nc >> 3] >> (nc & 7)) & 1) continue;
+         seen[nc >> 3] |= (uint8_t) (1u << (nc & 7));
+         queue[qt++] = (int32_t) nc;
+      }
+   }
+   free(seen); free(queue);
+   return same;
 }

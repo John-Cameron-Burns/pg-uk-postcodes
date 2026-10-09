@@ -270,6 +270,80 @@ static void tiers (void) {
    CHECK(valid > 500 && amb > 50);
 }
 
+// ---- do two patterns denote the same codes? ---------------------------------------------------------------
+
+static bool brute_same (const pc_pattern *a, const pc_pattern *b) {
+   if (a->total != b->total) return false;
+   char ta[PC_PAT_MAX_LEN + 1], tb[PC_PAT_MAX_LEN + 1];
+   for (uint64_t r = 0; r < a->total; r++) {
+      pc_pattern_render(a, r, ta);
+      pc_pattern_render(b, r, tb);
+      if (strcmp(ta, tb)) return false;
+   }
+   return true;
+}
+
+static void same_codes_tests (void) {
+   printf("\nsame codes: two patterns, one set\n");
+   char err[200];
+   struct { const char *a, *b; bool same; } known[] = {
+      { "\\d{2}-\\d{3}", "\\d\\d-\\d\\d\\d", true },
+      { "(?<a>\\d{2})-(?<b>\\d{3})", "\\d{2}-\\d{3}", true },
+      { "(?<a>\\d{2})-(?<b>\\d{3})", "(?<x>\\d{2})-(?<y>\\d{3})", true },
+      { "\\d{2}|[A-C]", "[A-C]|\\d{2}", true },
+      { "\\d{2}", "[0-9]{2}", true },
+      { "A(B|C)", "AB|AC", true },
+      { "\\d{2}-\\d{3}", "\\d{2}-\\d{4}", false },
+      { "\\d{2}(-\\d{3})?", "\\d{2}-\\d{3}", false },
+      { "\\d{2}", "\\d{3}", false },
+      { "[A-C]\\d", "[A-D]\\d", false },
+      { "A\\d", "B\\d", false },
+      { "\\d{1,2}", "\\d|\\d\\d", true },
+      { "\\d{1,2}", "\\d{2}", false },
+   };
+   for (size_t i = 0; i < sizeof known / sizeof *known; i++) {
+      pc_pattern *a = pc_pattern_compile(known[i].a, xalloc, err, sizeof err);
+      pc_pattern *b = pc_pattern_compile(known[i].b, xalloc, err, sizeof err);
+      CHECK(a && b);
+      if (a && b) {
+         CHECK(pc_pattern_same_codes(a, b) == known[i].same);
+         CHECK(pc_pattern_same_codes(b, a) == known[i].same);
+         CHECK(pc_pattern_same_codes(a, a));
+         CHECK(brute_same(a, b) == known[i].same);
+      }
+   }
+
+   // random pairs, against brute force: a pattern and set-preserving rewrites of it, and unrelated patterns
+   int pairs = 0, equal = 0, wrong = 0;
+   for (int iter = 0; iter < 8000; iter++) {
+      char re[400] = "", w1[420], w2[420], w3[420];
+      int nn = 0;
+      gen_alt(re, 2, &nn);
+      pc_pattern *a = pc_pattern_compile(re, xalloc, err, sizeof err);
+      if (!a || a->total > 100000) continue;
+
+      snprintf(w1, sizeof w1, "(?:%s)", re);                       // wrapped
+      char *o = w2;                                                // \d written as a class
+      for (const char *r = re; *r; r++) { if (r[0] == '\\' && r[1] == 'd') { strcpy(o, "[0-9]"); o += 5; r++; } else *o++ = *r; }
+      *o = '\0';
+      pc_pattern_strip_names(re, w3);                               // names removed
+      char other[400] = ""; int nn2 = 0;
+      gen_alt(other, 2, &nn2);
+      const char *variants[] = { w1, w2, w3, other };
+      for (int v = 0; v < 4; v++) {
+         pc_pattern *b = pc_pattern_compile(variants[v], xalloc, err, sizeof err);
+         if (!b || b->total > 100000) continue;
+         pairs++;
+         bool truth = brute_same(a, b);
+         if (truth) equal++;
+         if (pc_pattern_same_codes(a, b) != truth) { wrong++; printf("  WRONG for %s vs %s (truth %d)\n", re, variants[v], truth); }
+      }
+   }
+   printf("  random pairs: %d compared (%d with the same codes), %d wrong\n", pairs, equal, wrong);
+   CHECK(wrong == 0);
+   CHECK(pairs > 3000 && equal > 1500);
+}
+
 int main (void) {
    printf("named parts: every code against the C library's regex engine\n");
 
@@ -358,6 +432,7 @@ int main (void) {
    }
 
    tiers();
+   same_codes_tests();
 
    printf("\n%ld checks, %d failures\n", checks, failures);
    return failures ? 1 : 0;
