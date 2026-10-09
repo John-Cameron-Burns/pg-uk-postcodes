@@ -33,13 +33,13 @@
       }
    },
    "resources": {
-      "homepage": "https://github.com/ztz88f5f6h-glitch/pg-uk-postcodes",
+      "homepage": "https://github.com/John-Cameron-Burns/pg-uk-postcodes",
       "bugtracker": {
-         "web": "https://github.com/ztz88f5f6h-glitch/pg-uk-postcodes/issues"
+         "web": "https://github.com/John-Cameron-Burns/pg-uk-postcodes/issues"
       },
       "repository": {
-         "url": "https://github.com/ztz88f5f6h-glitch/pg-uk-postcodes.git",
-         "web": "https://github.com/ztz88f5f6h-glitch/pg-uk-postcodes",
+         "url": "https://github.com/John-Cameron-Burns/pg-uk-postcodes.git",
+         "web": "https://github.com/John-Cameron-Burns/pg-uk-postcodes",
          "type": "git"
       },
       "x_original": {
