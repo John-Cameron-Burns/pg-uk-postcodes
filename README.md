@@ -713,7 +713,12 @@ developed up to 1.3.0.
 PGXN could not reach Dave Green, so David Wheeler of PGXN made John Burns of Impact Data Metrics a
 co-owner of the distribution, which lets him make releases; Dave Green remains the primary owner. John took
 it up for bug fixing and gap filing and added the international `postal_code` type in 2.0.
-Claude AI was used to analyse and apply code fixes and generate tests
+
+**How the 2.x code was written.** Most of it was written with Claude Code, an AI coding assistant (Anthropic's Claude):
+the bug fixes from 1.3.1, the `postal_code` type and its pattern engine, named parts, the SQL, the documentation and the tests.
+John Burns specified what was wanted, made the design decisions, reviewed the results, and runs the extension on his
+organisation's production data. Dave Green's code is the foundation it is built on. Every commit is built and tested in
+CI on PostgreSQL 14 to 18 (`.github/workflows/`), and `VALIDATION.md` records what it was checked against.
 
 Bugs
 ----
