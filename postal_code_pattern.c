@@ -554,8 +554,12 @@ pc_pattern *pc_pattern_compile (const char *regex, pc_alloc_fn alloc, char *err,
    intern_state(&d, key, nk, &bad);
 
    for (int s = 0; s < d.ns && !bad; s++) {
-      const int *ks = &d.pool[d.off[s]];
+      // A copy, not a pointer into d.pool: intern_state() below may reallocate the pool, which would leave a pointer
+      // into it dangling. (It did: reads of the freed block gave the right answer on glibc and a wrong one elsewhere,
+      // dropping codes from a large pattern.) `key` is free again, having only held the start state.
       int nks = d.len[s];
+      memcpy(key, &d.pool[d.off[s]], sizeof(int) * (size_t) nks);
+      const int *ks = key;
       for (int i = 0; i < nks; i++) if (f.st[ks[i]].kind == 2) acc[s] = 1;
       for (int c = 0; c < NCH && !bad; c++) {
          int nt = 0;

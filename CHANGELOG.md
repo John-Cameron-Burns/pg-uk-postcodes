@@ -48,6 +48,14 @@ used in queries and a warning per call would flood logs.
 * A change that could surprise: re-adding a pattern that denotes the same codes as a country's current language,
   written differently, no longer makes a new version (which made different values). For your own language it relabels it;
   for a built-in language it says so in a NOTICE and keeps it. The very spec a language was made from is still silent, as in 2.0.x.
+* **Fixed: a use-after-free when compiling a large pattern** (present since 2.0.0). The compiler kept a pointer into an array
+  that it then grew, so after a reallocation it read freed memory. On glibc the freed block still held the right data and the
+  pattern came out right; on macOS the real SIC 2007 list, written out as a pattern, came out with 34 of its 729 codes
+  missing. Found by compiling that list on a Mac and then under AddressSanitizer. **No stored value is affected:** the
+  largest built-in pattern has 17 states, none of the 171 triggers it (the same totals, state counts and sampled codes with and
+  without the fix, and no error under AddressSanitizer), and the production database has no patterns of its own. Only a pattern
+  with hundreds of states -- a long list written out as an alternation -- could have been wrongly compiled. New:
+  `test_postal_code_lists.c` (fails without the fix), and the engine tests now also run under AddressSanitizer and UBSan in CI.
 * The error for a statement that is not `(?: )` or `(?<name> )` grouping now mentions named parts.
 
 ## 2.0.1
