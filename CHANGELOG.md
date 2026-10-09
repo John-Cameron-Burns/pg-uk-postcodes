@@ -2,22 +2,30 @@
 
 ## 2.1.0 (not yet released)
 
-**Upgrading from 2.0.x or 1.3.x:** `ALTER EXTENSION postcode UPDATE;`. Nothing stored changes; 2.1.0 only adds. (A rehearsal on a copy of the production database took 72 ms and left 21 million postcodes bit-for-bit identical.)
+**Upgrading from 2.0.x or 1.3.x:** `ALTER EXTENSION postcode UPDATE;`. Nothing stored changes; 2.1.0 only adds. (A rehearsal on a copy of the production database took 123 ms and left 21 million postcodes bit-for-bit identical.)
 
 **New: named parts.** A pattern can name the parts of a code, `(?<name>...)`, and the parts can be read back:
 
     SELECT add_country_template('XQ', '/(?<major>\d{2})-(?<minor>\d{3})/');
-    SELECT part('XQ-12-345', 'major');               -- 12
-    SELECT parts('XQ-12-345');                       -- {"major": "12", "minor": "345"}
-    SELECT prefix_of('XQ-12-345', 'major');          -- the range of every code that starts XQ-12
+    SELECT part('XQ-12-345'::postal_code, 'major');               -- 12
+    SELECT parts('XQ-12-345'::postal_code);                       -- {"major": "12", "minor": "345"}
+    SELECT prefix_of('XQ-12-345'::postal_code, 'major');          -- the range of every code that starts XQ-12
 
 * `part(code, name)` is the piece of text; `prefix_of(code, name)` is everything up to and including it, as a
   `postal_code_range` (indexable, groupable, usable with `<@`). For GB these are the pieces `area`, `district`,
   `sector` and `walk` (as `to_char` names them) and Royal Mail's levels: `part('GB-SW1A 1AA', 'district')` is `1A`;
   `prefix_of(..., 'district')` is the range of `GB-SW1A`.
 * `parts(code)` is all of them as `jsonb` (a part the code does not have is null). The view `postal_code_parts`
-  lists the parts each country has, in order. GB, US, CA, IE and BR have parts; FR, CZ and LU have none, and `part()`
-  says so.
+  lists the parts each country has, in order. GB (and GG, GI, IM, JE), US, CA, IE and BR have parts, and so do 29 of the
+  built-in pattern countries (those whose codes really have two kinds of information in them: ES and TR province, KY
+  island, MT locality, NL digits and letters, the `base` and `extension` of CO CR IR LB MZ PT SA TW VE, the `zip5` and `plus4`
+  of the US territories, the two blocks of JP PL CL BM SO, and AR). The other 142 pattern countries -- one undivided number, or only grouped for
+  display, or a code of two lengths, or a single fixed code -- and FR, CZ and LU have none, and `part()` says so.
+* **The UK `postcode` type has the same four parts**: `part(pc, 'area')`, `parts(pc)` and `prefix_of(pc, 'district')` (which
+  returns the text the `%` operator takes). They are read from the type's own fields, so they are `IMMUTABLE` and can be
+  indexed. Every `to_char` letter combination has a replacement; the README has the table.
+* Because two types now have `part()`, `parts()` and `prefix_of()`, **a bare string literal is ambiguous**:
+  `part('SW1A 1AA', 'area')` is "function part(unknown, unknown) is not unique". Cast it; a column needs nothing.
 * A name changes nothing about which codes are valid or how they are stored or ranked, so nothing stored is touched.
 * Names are labels, not rules: the same codes written or named differently relabel the current language of a
   country instead of making a new version (which would make different values), and a language's pattern may be
@@ -37,8 +45,9 @@ not a sensible way to take a code apart (its `A D S W` letters give pieces, not 
 Use `part()` / `prefix_of()`. The function carries a `COMMENT` saying so; there is no run-time warning, since it is
 used in queries and a warning per call would flood logs.
 
-* A change that could surprise: re-adding a pattern that denotes the same codes as a country's current,
-  non-built-in language, written differently, now relabels that language; in 2.0.x it made a new version.
+* A change that could surprise: re-adding a pattern that denotes the same codes as a country's current language,
+  written differently, no longer makes a new version (which made different values). For your own language it relabels it;
+  for a built-in language it says so in a NOTICE and keeps it. The very spec a language was made from is still silent, as in 2.0.x.
 * The error for a statement that is not `(?: )` or `(?<name> )` grouping now mentions named parts.
 
 ## 2.0.1

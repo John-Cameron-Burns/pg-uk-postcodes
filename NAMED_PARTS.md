@@ -38,7 +38,15 @@ automaton passes straight through it. It only says where in a code the part is. 
    wrong). It is not judged by text with the names stripped, which I tried first: `\d{2}-\d{3}` is not textually
    `(?:\d{2})-(?:\d{3})`, so "removing the names" made a new version. A built-in row is never edited (it comes back
    with the extension), so another spelling of a built-in language is the country's next language, as in 2.0.x.
-3. **Compiled formats** (US, CA, FR, BR, CZ, LU, GB, IE) store codes in their own layout, but their text is
+3. **(done) The legacy `postcode` type** has `part()`, `parts()` and `prefix_of()` as overloads, read from its fields
+   (`IMMUTABLE`, indexable); `prefix_of` returns the text `%` takes. Cost: with two types, a bare string literal is
+   ambiguous and must be cast (columns are fine; `to_char` was always the same). Every `to_char` letter combination is
+   tested against its replacement.
+   **(done) The built-in patterns:** 29 of the 171 pattern countries are named (`tools/world_formats.py` `PARTS`,
+   spliced into the upgrade script as UPDATEs that the permanence trigger only allows if the codes are unchanged).
+   The other 142 -- one undivided number (about 106 of them), display grouping, two-length codes, single fixed codes -- have none. Names only where a system really has two kinds of
+   information in a code, never for display grouping (SE, SK, GR) or a code of two lengths (IL, EG, VN).
+   **Compiled formats** (US, CA, FR, BR, CZ, LU, GB, IE) store codes in their own layout, but their text is
    canonical. Ship a parts-only pattern for each, used only for splitting. Only the meaningful parts are named
    (US: ZIP and +4; BR: the CEP's region digits and suffix, not an arbitrary split). A CI test compiles each parts
    pattern as a ranked pattern and checks it denotes exactly the compiled format's set of codes, so the two
@@ -60,8 +68,9 @@ automaton passes straight through it. It only says where in a code the part is. 
   `prefix_of()` and range bounds for index-assisted queries, as `%` does.
 - The compiled formats' parts are in the table `postal_code_format_parts` (GB, US, CA, IE, BR); FR, CZ and LU have none.
 - `add_country_template()` runs the ambiguity check and relabels or versions as above.
-- Additive: a 2.1.0 upgrade script, no change to stored values or the binary format. Rehearsed on a copy of
-  production: 72 ms, 21 million postcodes unchanged. Dump and restore tested with named patterns.
+- Additive: a 2.1.0 upgrade script, no change to stored values or the binary format. Rehearsed on a fresh copy of
+  production: 123 ms including the 29 built-in relabels, 21 million postcodes unchanged. Dump and restore tested with
+  named patterns.
 - `postal_code_pattern_check()` returns the regex as before (names included).
 
 ## The GB naming problem
