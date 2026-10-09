@@ -23,11 +23,11 @@ FROM (VALUES ('GB-SW1A 1AA'::postal_code), ('GB-EC4Y 0HQ'), ('GB-M1 1AA'), ('GB-
  GB-GX11 1AA | GX   | 11       | 1      | AA
 (8 rows)
 
-SELECT parts('GB-SW1A 1AA') AS gb_full, parts('GB-SW1A') AS gb_outcode,
-       parts('US-90210-1234') AS us_zip4, parts('US-90210') AS us_zip5,
-       parts('CA-K1A 0B1') AS ca_full, parts('CA-K1A') AS ca_fsa,
-       parts('IE-A65 F4E2') AS ie_full, parts('IE-D6W') AS ie_key,
-       parts('BR-01310-100') AS br_full, parts('BR-01310') AS br_base;
+SELECT parts('GB-SW1A 1AA'::postal_code) AS gb_full, parts('GB-SW1A'::postal_code) AS gb_outcode,
+       parts('US-90210-1234'::postal_code) AS us_zip4, parts('US-90210'::postal_code) AS us_zip5,
+       parts('CA-K1A 0B1'::postal_code) AS ca_full, parts('CA-K1A'::postal_code) AS ca_fsa,
+       parts('IE-A65 F4E2'::postal_code) AS ie_full, parts('IE-D6W'::postal_code) AS ie_key,
+       parts('BR-01310-100'::postal_code) AS br_full, parts('BR-01310'::postal_code) AS br_base;
                             gb_full                            |                           gb_outcode                           |              us_zip4               |             us_zip5              |           ca_full            |           ca_fsa            |                   ie_full                   |                  ie_key                   |                     br_full                      |                     br_base                     
 ---------------------------------------------------------------+----------------------------------------------------------------+------------------------------------+----------------------------------+------------------------------+-----------------------------+---------------------------------------------+-------------------------------------------+--------------------------------------------------+-------------------------------------------------
  {"area": "SW", "walk": "AA", "sector": "1", "district": "1A"} | {"area": "SW", "walk": null, "sector": null, "district": "1A"} | {"zip5": "90210", "plus4": "1234"} | {"zip5": "90210", "plus4": null} | {"fsa": "K1A", "ldu": "0B1"} | {"fsa": "K1A", "ldu": null} | {"unique_id": "F4E2", "routing_key": "A65"} | {"unique_id": null, "routing_key": "D6W"} | {"area": "1310", "region": "0", "suffix": "100"} | {"area": "1310", "region": "0", "suffix": null}
@@ -58,8 +58,8 @@ FROM (VALUES ('GB-SW1A 1AA'::postal_code, 'area', 'GB-SW'),
 (9 rows)
 
 -- the district piece is not Royal Mail's district, which is why both functions exist
-SELECT part('GB-SW1A 1AA', 'district') AS piece,
-       prefix_of('GB-SW1A 1AA', 'district') AS level,
+SELECT part('GB-SW1A 1AA'::postal_code, 'district') AS piece,
+       prefix_of('GB-SW1A 1AA'::postal_code, 'district') AS level,
        lower_bound('GB-SW1A') AS level_starts_at,
        outcode('GB-SW1A 1AA') AS same_as_outcode;
  piece |       level       | level_starts_at | same_as_outcode 
@@ -68,12 +68,12 @@ SELECT part('GB-SW1A 1AA', 'district') AS piece,
 (1 row)
 
 -- a part the code does not have is NULL; so is anything given NULL
-SELECT part('GB-SW1A', 'sector') IS NULL AS no_sector,
-       part('GB-SW1A', 'walk') IS NULL AS no_walk,
-       prefix_of('GB-SW1A', 'walk') IS NULL AS no_walk_prefix,
-       part('US-90210', 'plus4') IS NULL AS no_plus4,
+SELECT part('GB-SW1A'::postal_code, 'sector') IS NULL AS no_sector,
+       part('GB-SW1A'::postal_code, 'walk') IS NULL AS no_walk,
+       prefix_of('GB-SW1A'::postal_code, 'walk') IS NULL AS no_walk_prefix,
+       part('US-90210'::postal_code, 'plus4') IS NULL AS no_plus4,
        part(NULL::postal_code, 'area') IS NULL AS null_code,
-       part('GB-SW1A 1AA', NULL) IS NULL AS null_name,
+       part('GB-SW1A 1AA'::postal_code, NULL) IS NULL AS null_name,
        parts(NULL::postal_code) IS NULL AS null_parts;
  no_sector | no_walk | no_walk_prefix | no_plus4 | null_code | null_name | null_parts 
 -----------+---------+----------------+----------+-----------+-----------+------------
@@ -93,13 +93,13 @@ FROM addr WHERE pc::text LIKE 'GB-%' GROUP BY 1 ORDER BY 1;
  [GB-SW1V,GB-SW1W) |     1
 (3 rows)
 
-SELECT pc FROM addr WHERE pc <@ prefix_of('GB-SW1A 1AA', 'sector') ORDER BY pc;
+SELECT pc FROM addr WHERE pc <@ prefix_of('GB-SW1A 1AA'::postal_code, 'sector') ORDER BY pc;
      pc      
 -------------
  GB-SW1A 1AA
 (1 row)
 
-SELECT pc FROM addr WHERE pc <@ prefix_of('GB-SW1A 2AA', 'district') ORDER BY pc;
+SELECT pc FROM addr WHERE pc <@ prefix_of('GB-SW1A 2AA'::postal_code, 'district') ORDER BY pc;
      pc      
 -------------
  GB-SW1A
@@ -109,50 +109,261 @@ SELECT pc FROM addr WHERE pc <@ prefix_of('GB-SW1A 2AA', 'district') ORDER BY pc
 (4 rows)
 
 -- mistakes are errors, and say what there is
-SELECT part('GB-SW1A 1AA', 'postcode');
+SELECT part('GB-SW1A 1AA'::postal_code, 'postcode');
 ERROR:  postal codes of GB have no part called "postcode"
 HINT:  the parts are: area, district, sector, walk
-SELECT part('GB-SW1A 1AA', 'District');
+SELECT part('GB-SW1A 1AA'::postal_code, 'District');
 ERROR:  postal codes of GB have no part called "District"
 HINT:  the parts are: area, district, sector, walk
-SELECT part('FR-75001', 'department');
+SELECT part('FR-75001'::postal_code, 'department');
 ERROR:  postal codes of FR have no named parts
 HINT:  see postal_code_parts for the countries that do; a pattern names parts with (?<name>...)
-SELECT parts('FR-75001');
+SELECT parts('FR-75001'::postal_code);
 ERROR:  postal codes of FR have no named parts
 HINT:  see postal_code_parts for the countries that do; a pattern names parts with (?<name>...)
-SELECT prefix_of('PL-00-950', 'x');
+SELECT prefix_of('PL-00-950'::postal_code, 'x');
 ERROR:  postal codes of PL have no part called "x"
-HINT:  the parts are: none
-SELECT part('US-~', 'zip5');
+HINT:  the parts are: prefix, suffix
+SELECT part('US-~'::postal_code, 'zip5');
  part 
 ------
  
 (1 row)
 
+-- the UK type has the same four parts, read from its own fields (and unlike postal_code's they are IMMUTABLE)
+SELECT pc, part(pc, 'area') AS area, part(pc, 'district') AS district, part(pc, 'sector') AS sector, part(pc, 'walk') AS walk
+FROM (VALUES ('SW1A 1AA'::postcode), ('EC4Y 0HQ'), ('M1 1AA'), ('BX5 5AT'), ('GY1 1AA'), ('GX11 1AA')) v(pc);
+    pc    | area | district | sector | walk 
+----------+------+----------+--------+------
+ SW1A 1AA | SW   | 1A       | 1      | AA
+ EC4Y 0HQ | EC   | 4Y       | 0      | HQ
+ M1 1AA   | M    | 1        | 1      | AA
+ BX5 5AT  | BX   | 5        | 5      | AT
+ GY1 1AA  | GY   | 1        | 1      | AA
+ GX11 1AA | GX   | 11       | 1      | AA
+(6 rows)
+
+SELECT parts('SW1A 1AA'::postcode), parts('M1 1AA'::postcode);
+                             parts                             |                            parts                            
+---------------------------------------------------------------+-------------------------------------------------------------
+ {"area": "SW", "walk": "AA", "sector": "1", "district": "1A"} | {"area": "M", "walk": "AA", "sector": "1", "district": "1"}
+(1 row)
+
+SELECT pc, prefix_of(pc, 'area') AS area, prefix_of(pc, 'district') AS district,
+       prefix_of(pc, 'sector') AS sector, prefix_of(pc, 'walk') AS walk
+FROM (VALUES ('SW1A 1AA'::postcode), ('EC4Y 0HQ'), ('M1 1AA')) v(pc);
+    pc    | area | district | sector |   walk   
+----------+------+----------+--------+----------
+ SW1A 1AA | SW   | SW1A     | SW1A 1 | SW1A 1AA
+ EC4Y 0HQ | EC   | EC4Y     | EC4Y 0 | EC4Y 0HQ
+ M1 1AA   | M    | M1       | M1 1   | M1 1AA
+(3 rows)
+
+-- ... which is what to_char's letters were: every one of them is now spelled with a name
+SELECT bool_and(to_char(pc, 'A') = part(pc, 'area')
+            AND to_char(pc, 'D') = part(pc, 'district')
+            AND to_char(pc, 'S') = part(pc, 'sector')
+            AND to_char(pc, 'W') = part(pc, 'walk')
+            AND to_char(pc, 'AD') = prefix_of(pc, 'district')
+            AND to_char(pc, 'AD S') = prefix_of(pc, 'sector')
+            AND to_char(pc, 'AD SW') = prefix_of(pc, 'walk')
+            AND pc::text = prefix_of(pc, 'walk')) AS to_char_replaced
+FROM (VALUES ('SW1A 1AA'::postcode), ('EC4Y 0HQ'), ('M1 1AA'), ('BX5 5AT'), ('GY1 1AA'), ('GX11 1AA'),
+             ('W1A 0AX'), ('B33 8TH'), ('CR2 6XH'), ('DN55 1PT'), ('LS24 8AA'), ('ZE1 0AA')) v(pc);
+ to_char_replaced 
+------------------
+ t
+(1 row)
+
+-- ... and it agrees with postal_code, where both can hold the code
+SELECT bool_and(part(pc, n) = part(('GB-' || pc::text)::postal_code, n)
+            AND parts(pc) = parts(('GB-' || pc::text)::postal_code)) AS same_as_postal_code
+FROM (VALUES ('SW1A 1AA'::postcode), ('EC4Y 0HQ'), ('M1 1AA'), ('BX5 5AT'), ('GY1 1AA'), ('GX11 1AA'), ('LS24 8AA')) v(pc),
+     (VALUES ('area'), ('district'), ('sector'), ('walk')) names(n);
+ same_as_postal_code 
+---------------------
+ t
+(1 row)
+
+-- find the postcodes in the same sector or district: the % operator takes the text prefix_of() gives
+SELECT pc FROM (VALUES ('SW1A 1AA'::postcode), ('SW1A 1AB'), ('SW1A 2AA'), ('SW1V 1AA'), ('EC4Y 0HQ')) v(pc)
+WHERE pc % prefix_of('SW1A 1AA'::postcode, 'sector') ORDER BY pc;
+    pc    
+----------
+ SW1A 1AA
+ SW1A 1AB
+(2 rows)
+
+SELECT pc FROM (VALUES ('SW1A 1AA'::postcode), ('SW1A 1AB'), ('SW1A 2AA'), ('SW1V 1AA'), ('EC4Y 0HQ')) v(pc)
+WHERE pc % prefix_of('SW1A 1AA'::postcode, 'district') ORDER BY pc;
+    pc    
+----------
+ SW1A 1AA
+ SW1A 1AB
+ SW1A 2AA
+(3 rows)
+
+SELECT prefix_of(pc, 'district') AS district, count(*)
+FROM (VALUES ('SW1A 1AA'::postcode), ('SW1A 2AA'), ('SW1V 1AA'), ('EC4Y 0HQ')) v(pc) GROUP BY 1 ORDER BY 1;
+ district | count 
+----------+-------
+ EC4Y     |     1
+ SW1A     |     2
+ SW1V     |     1
+(3 rows)
+
+-- they can be indexed, which postal_code's cannot
+CREATE TEMP TABLE uk (pc postcode);
+INSERT INTO uk VALUES ('SW1A 1AA'), ('SW1A 2AA'), ('EC4Y 0HQ');
+CREATE INDEX uk_area ON uk (part(pc, 'area'));
+SELECT part(pc, 'area') AS area, count(*) FROM uk GROUP BY 1 ORDER BY 1;
+ area | count 
+------+-------
+ EC   |     1
+ SW   |     2
+(2 rows)
+
+-- a value that is not a valid postcode has no parts; a wrong part name is an error that says what there is
+SELECT part(range_upper('GX'), 'area') IS NULL AS bound_has_no_parts, to_char(range_upper('GX'), 'AD SW') AS what_to_char_gives;
+ bound_has_no_parts | what_to_char_gives 
+--------------------+--------------------
+ t                  | ?0 0AA
+(1 row)
+
+SELECT part('SW1A 1AA'::postcode, 'postcode');
+ERROR:  postcodes have no part called "postcode"
+HINT:  the parts are: area, district, sector, walk
+SELECT part(NULL::postcode, 'area') IS NULL AS null_in_null_out;
+ null_in_null_out 
+------------------
+ t
+(1 row)
+
+-- two types now have these functions, so a bare string literal cannot say which: cast it (a column needs nothing)
+SELECT part('SW1A 1AA', 'area');
+ERROR:  function part(unknown, unknown) is not unique
+LINE 1: SELECT part('SW1A 1AA', 'area');
+               ^
+HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
+SELECT part('SW1A 1AA'::postcode, 'area'), part('GB-SW1A 1AA'::postal_code, 'area');
+ part | part 
+------+------
+ SW   | SW
+(1 row)
+
 -- what each country's parts are
 SELECT iso2, format, ord, name FROM postal_code_parts
 WHERE iso2 IN ('GB', 'GG', 'US', 'CA', 'IE', 'BR', 'FR', 'PL') ORDER BY iso2, ord;
- iso2 | format | ord |    name     
-------+--------+-----+-------------
- BR   | BR     |   1 | region
- BR   | BR     |   2 | area
- BR   | BR     |   3 | suffix
- CA   | CA     |   1 | fsa
- CA   | CA     |   2 | ldu
- GB   | GB     |   1 | area
- GB   | GB     |   2 | district
- GB   | GB     |   3 | sector
- GB   | GB     |   4 | walk
- GG   | GB     |   1 | area
- GG   | GB     |   2 | district
- GG   | GB     |   3 | sector
- GG   | GB     |   4 | walk
- IE   | IE     |   1 | routing_key
- IE   | IE     |   2 | unique_id
- US   | US     |   1 | zip5
- US   | US     |   2 | plus4
-(17 rows)
+ iso2 |   format   | ord |    name     
+------+------------+-----+-------------
+ BR   | BR         |   1 | region
+ BR   | BR         |   2 | area
+ BR   | BR         |   3 | suffix
+ CA   | CA         |   1 | fsa
+ CA   | CA         |   2 | ldu
+ GB   | GB         |   1 | area
+ GB   | GB         |   2 | district
+ GB   | GB         |   3 | sector
+ GB   | GB         |   4 | walk
+ GG   | GB         |   1 | area
+ GG   | GB         |   2 | district
+ GG   | GB         |   3 | sector
+ GG   | GB         |   4 | walk
+ IE   | IE         |   1 | routing_key
+ IE   | IE         |   2 | unique_id
+ PL   | pattern v1 |   1 | prefix
+ PL   | pattern v1 |   2 | suffix
+ US   | US         |   1 | zip5
+ US   | US         |   2 | plus4
+(19 rows)
+
+-- the built-in patterns with real structure have parts; the ones that are one number have none
+SELECT count(DISTINCT iso2) AS countries_with_pattern_parts FROM postal_code_parts WHERE format = 'pattern v1';
+ countries_with_pattern_parts 
+------------------------------
+                           29
+(1 row)
+
+SELECT iso2, string_agg(name, ', ' ORDER BY ord) AS parts FROM postal_code_parts
+WHERE format = 'pattern v1' GROUP BY iso2 ORDER BY iso2;
+ iso2 |         parts          
+------+------------------------
+ AR   | province, number, face
+ AS   | zip5, plus4
+ BM   | prefix, suffix
+ CL   | prefix, suffix
+ CO   | base, extension
+ CR   | base, extension
+ ES   | province, local
+ FM   | zip5, plus4
+ GU   | zip5, plus4
+ IR   | base, extension
+ JP   | prefix, suffix
+ KY   | island, number
+ LB   | base, extension
+ MH   | zip5, plus4
+ MP   | zip5, plus4
+ MT   | locality, number
+ MZ   | base, extension
+ NL   | digits, letters
+ PL   | prefix, suffix
+ PR   | zip5, plus4
+ PT   | base, extension
+ PW   | zip5, plus4
+ SA   | base, extension
+ SO   | prefix, suffix
+ TR   | province, local
+ TW   | base, extension
+ UM   | zip5, plus4
+ VE   | base, extension
+ VI   | zip5, plus4
+(29 rows)
+
+SELECT code, parts(code) FROM (VALUES ('PL-00-950'::postal_code), ('JP-100-0001'), ('CL-833-0000'), ('ES-28001'), ('TR-34000'),
+       ('KY-1-1100'), ('MT-VLT 1117'), ('MT-VLT'), ('NL-1012 AB'), ('NL-1012'), ('PT-1000-001'), ('PT-1000'),
+       ('AR-B1832GMR'), ('AR-B1832'), ('AR-1832'), ('CO-630001-025'), ('CO-630001'), ('TW-100-12'), ('BM-HM 12'),
+       ('PR-00601-1234'), ('GU-96910'), ('VI-00802')) v(code);
+     code      |                       parts                        
+---------------+----------------------------------------------------
+ PL-00-950     | {"prefix": "00", "suffix": "950"}
+ JP-100-0001   | {"prefix": "100", "suffix": "0001"}
+ CL-833-0000   | {"prefix": "833", "suffix": "0000"}
+ ES-28001      | {"local": "001", "province": "28"}
+ TR-34000      | {"local": "000", "province": "34"}
+ KY-1-1100     | {"island": "1", "number": "1100"}
+ MT-VLT 1117   | {"number": "1117", "locality": "VLT"}
+ MT-VLT        | {"number": null, "locality": "VLT"}
+ NL-1012 AB    | {"digits": "1012", "letters": "AB"}
+ NL-1012       | {"digits": "1012", "letters": null}
+ PT-1000-001   | {"base": "1000", "extension": "001"}
+ PT-1000       | {"base": "1000", "extension": null}
+ AR-B1832GMR   | {"face": "GMR", "number": "1832", "province": "B"}
+ AR-B1832      | {"face": null, "number": "1832", "province": "B"}
+ AR-1832       | {"face": null, "number": null, "province": null}
+ CO-630001-025 | {"base": "630001", "extension": "025"}
+ CO-630001     | {"base": "630001", "extension": null}
+ TW-100-12     | {"base": "100", "extension": "12"}
+ BM-HM 12      | {"prefix": "HM", "suffix": "12"}
+ PR-00601-1234 | {"zip5": "00601", "plus4": "1234"}
+ GU-96910      | {"zip5": "96910", "plus4": null}
+ VI-00802      | {"zip5": "00802", "plus4": null}
+(22 rows)
+
+SELECT prefix_of('ES-28001'::postal_code, 'province') = postal_prefix('ES-28') AS spain_province_level,
+       prefix_of('NL-1012 AB'::postal_code, 'digits') = postal_prefix('NL-1012') AS dutch_digits_level,
+       prefix_of('PL-00-950'::postal_code, 'prefix') = postal_prefix('PL-00') AS polish_prefix_level;
+ spain_province_level | dutch_digits_level | polish_prefix_level 
+----------------------+--------------------+---------------------
+ t                    | t                  | t
+(1 row)
+
+-- naming never changed which codes a built-in language denotes ...
+SELECT count(*) AS builtin_languages_that_differ_from_their_source
+FROM postal_code_languages l WHERE builtin AND NOT postal_code_same_codes(postal_code_pattern_check(l.source), l.pattern);
+ builtin_languages_that_differ_from_their_source 
+-------------------------------------------------
+                                               0
+(1 row)
 
 -- a pattern of your own names its parts: a regular expression with (?<name>...)
 SELECT add_country_template('QP', '/(?<major>\d{2})-(?<minor>\d{3})(-(?<extra>[A-C]))?/');
@@ -161,19 +372,19 @@ SELECT add_country_template('QP', '/(?<major>\d{2})-(?<minor>\d{3})(-(?<extra>[A
  
 (1 row)
 
-SELECT parts('QP-12-345'), parts('QP-12-345-B');
+SELECT parts('QP-12-345'::postal_code), parts('QP-12-345-B'::postal_code);
                      parts                      |                     parts                     
 ------------------------------------------------+-----------------------------------------------
  {"extra": null, "major": "12", "minor": "345"} | {"extra": "B", "major": "12", "minor": "345"}
 (1 row)
 
-SELECT part('QP-12-345-B', 'extra') AS extra, part('QP-12-345', 'extra') IS NULL AS no_extra;
+SELECT part('QP-12-345-B'::postal_code, 'extra') AS extra, part('QP-12-345'::postal_code, 'extra') IS NULL AS no_extra;
  extra | no_extra 
 -------+----------
  B     | t
 (1 row)
 
-SELECT prefix_of('QP-12-345-B', 'minor') = postal_prefix('QP-12-345') AS minor_level;
+SELECT prefix_of('QP-12-345-B'::postal_code, 'minor') = postal_prefix('QP-12-345') AS minor_level;
  minor_level 
 -------------
  t
@@ -194,7 +405,7 @@ SELECT add_country_template('QR', '/(?<code>(?<first>\d{2})(?<second>\d{2})?)|(?
  
 (1 row)
 
-SELECT parts('QR-1234'), parts('QR-12'), parts('QR-ABC');
+SELECT parts('QR-1234'::postal_code), parts('QR-12'::postal_code), parts('QR-ABC'::postal_code);
                              parts                             |                            parts                            |                            parts                             
 ---------------------------------------------------------------+-------------------------------------------------------------+--------------------------------------------------------------
  {"code": "1234", "word": null, "first": "12", "second": "34"} | {"code": "12", "word": null, "first": "12", "second": null} | {"code": null, "word": "ABC", "first": null, "second": null}
@@ -213,7 +424,7 @@ SELECT version, source FROM postal_code_languages WHERE iso2 = 'QP' ORDER BY ver
        1 | /(?<a>\d{2})-(?<b>\d{3})(-(?<c>[A-C]))?/
 (1 row)
 
-SELECT parts('QP-12-345-B') AS relabelled, 'QP-12-345-B'::postal_code = 'QP-12-345-B'::postal_code AS same_value;
+SELECT parts('QP-12-345-B'::postal_code) AS relabelled, 'QP-12-345-B'::postal_code = 'QP-12-345-B'::postal_code AS same_value;
             relabelled             | same_value 
 -----------------------------------+------------
  {"a": "12", "b": "345", "c": "B"} | t
@@ -238,7 +449,7 @@ SELECT count(*) AS parts_left FROM postal_code_parts WHERE iso2 = 'QP';
           0
 (1 row)
 
-SELECT part('QP-12-345', 'a');
+SELECT part('QP-12-345'::postal_code, 'a');
 ERROR:  postal codes of QP have no part called "a"
 HINT:  the parts are: none
 SELECT add_country_template('QP', '/(?<major>\d{2})-(?<minor>\d{3})(-(?<extra>[A-C]))?/');
@@ -267,24 +478,51 @@ SELECT version, source FROM postal_code_languages WHERE iso2 = 'QP' ORDER BY ver
        2 | /(?<a>\d{2})-(?<b>\d{4})/
 (2 rows)
 
-SELECT 'QP-12-3456'::postal_code = 'QP-12-3456'::postal_code AS version2_works, parts('QP-12-3456');
+SELECT 'QP-12-3456'::postal_code = 'QP-12-3456'::postal_code AS version2_works, parts('QP-12-3456'::postal_code);
  version2_works |          parts           
 ----------------+--------------------------
  t              | {"a": "12", "b": "3456"}
 (1 row)
 
--- a built-in language is never edited: another spelling of it is the country's next language
+-- a built-in language is never edited, and the same codes never make a new version of it
 SELECT add_country_template('DK', '/(?<a>\d{4})/');
+NOTICE:  the built-in language of DK already denotes these codes and is kept as it is, with its own part names
  add_country_template 
 ----------------------
  
 (1 row)
 
-SELECT version, builtin FROM postal_code_languages WHERE iso2 = 'DK' ORDER BY version;
- version | builtin 
----------+---------
-       1 | t
-       2 | f
+SELECT add_country_template('PL', 'NN-NNN');          -- exactly what PL was made from: nothing to do, nothing said
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT add_country_template('PL', '/\d{2}-\d{3}/');
+NOTICE:  the built-in language of PL already denotes these codes and is kept as it is, with its own part names
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT iso2, version, builtin FROM postal_code_languages WHERE iso2 IN ('DK', 'PL') ORDER BY iso2, version;
+ iso2 | version | builtin 
+------+---------+---------
+ DK   |       1 | t
+ PL   |       1 | t
+(2 rows)
+
+SELECT add_country_template('DK', '/(?<a>\d{5})/');
+ add_country_template 
+----------------------
+ 
+(1 row)
+
+SELECT iso2, version, builtin FROM postal_code_languages WHERE iso2 = 'DK' ORDER BY version;
+ iso2 | version | builtin 
+------+---------+---------
+ DK   |       1 | t
+ DK   |       2 | f
 (2 rows)
 
 -- a language still cannot change what it means; only be written another way
@@ -338,7 +576,7 @@ SELECT postal_code_pattern_size('/[A-Z]{1,2}\d[A-Z\d]?( \d[A-Z]{2})?/') > 100000
  t
 (1 row)
 
-SELECT parts('QS-SW1A 1AA');
+SELECT parts('QS-SW1A 1AA'::postal_code);
                              parts                             
 ---------------------------------------------------------------
  {"area": "SW", "walk": "AA", "sector": "1", "district": "1A"}
@@ -350,7 +588,7 @@ SELECT add_country_template('QS', '/(?<a>\d{2})(?<b>\d{1,2})/');
  
 (1 row)
 
-SELECT parts('QS-1234'), parts('QS-123');
+SELECT parts('QS-1234'::postal_code), parts('QS-123'::postal_code);
          parts          |         parts         
 ------------------------+-----------------------
  {"a": "12", "b": "34"} | {"a": "12", "b": "3"}

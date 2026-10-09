@@ -9,7 +9,7 @@
 --
 -- A name changes nothing about which codes are valid or how they are stored or ranked, so nothing already
 -- stored is touched. The compiled formats (GB, US, CA, IE, BR) get named parts from the table
--- postal_code_format_parts. Nothing in 2.0.x is removed; to_char(postcode, text) is marked deprecated.
+-- postal_code_format_parts, and the UK postcode type has the same four parts as GB. Nothing in 2.0.x is removed; to_char(postcode, text) is marked deprecated.
 
 CREATE FUNCTION postal_code_pattern_part_names(text)
    RETURNS text[]
@@ -59,6 +59,36 @@ CREATE FUNCTION prefix_of(postal_code, text)
    AS 'SELECT postal_prefix(left($1::text, 3 + postal_code_part_end($1, $2)))';
 COMMENT ON FUNCTION prefix_of(postal_code, text) IS
    'Everything up to and including the named part, as the range of every code that starts that way: prefix_of(''GB-SW1A 1AA'', ''district'') is the range of GB-SW1A, which is Royal Mail''s district (part() gives the piece, ''1A''). Usable with <@, indexable like postal_prefix(), and groupable. NULL if the code has no such part.';
+
+-- ---- the same parts for the UK type ---------------------------------------------------------------------
+-- postcode has the four parts postal_code gives GB -- area, district, sector, walk, the pieces to_char()'s A D S W
+-- give -- read straight from its fields, so these are IMMUTABLE (they can be indexed) and need no table. This is
+-- what to_char(postcode, text) is replaced by. A value that is not valid (a range bound that renders '?') has no
+-- parts and gives NULL, as ::text does.
+--
+-- Note: with two types having part(), parts() and prefix_of(), a bare string literal is ambiguous
+-- (part('SW1A 1AA', 'area') -> "function part(unknown, unknown) is not unique"). Columns need nothing; a literal
+-- needs a cast: part('SW1A 1AA'::postcode, 'area'). to_char() has always been the same.
+CREATE FUNCTION part(postcode, text)
+   RETURNS text
+   AS 'MODULE_PATHNAME', 'postcode_part'
+   LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION part(postcode, text) IS
+   'The named piece of a UK postcode: area (SW), district (1A), sector (1) or walk (AA) for SW1A 1AA -- what to_char(pc, ''A''), ''D'', ''S'' and ''W'' give. NULL for a value that is not valid.';
+
+CREATE FUNCTION parts(postcode)
+   RETURNS jsonb
+   AS 'MODULE_PATHNAME', 'postcode_parts_json'
+   LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION parts(postcode) IS
+   'All four parts of a UK postcode as jsonb: {"area": "SW", "district": "1A", "sector": "1", "walk": "AA"} (jsonb orders its keys itself).';
+
+CREATE FUNCTION prefix_of(postcode, text)
+   RETURNS text
+   AS 'MODULE_PATHNAME', 'postcode_prefix_of'
+   LANGUAGE C IMMUTABLE STRICT;
+COMMENT ON FUNCTION prefix_of(postcode, text) IS
+   'Everything up to and including the named part, as the text the % operator takes: prefix_of(''SW1A 1AA''::postcode, ''district'') is ''SW1A'', Royal Mail''s district, so pc % prefix_of(x, ''sector'') finds the postcodes in x''s sector. What to_char(pc, ''AD''), ''AD S'' and ''AD SW'' give.';
 
 -- ---- the parts of the compiled formats --------------------------------------------------------------------
 -- The compiled formats keep their codes in their own layouts, but their text is canonical, so a pattern over
@@ -134,13 +164,19 @@ BEGIN
    -- one writer at a time, so two sessions cannot be given the same version
    LOCK TABLE postal_code_languages IN SHARE ROW EXCLUSIVE MODE;
 
-   SELECT l.version, l.pattern, l.builtin INTO cur FROM postal_code_languages l WHERE l.iso2 = norm_cc ORDER BY l.version DESC LIMIT 1;
-   IF cur.version IS NOT NULL AND cur.pattern <> re AND NOT cur.builtin AND postal_code_same_codes(cur.pattern, re) THEN
-      -- the same codes written or named differently: relabel the language rather than make a new version
-      UPDATE postal_code_languages SET source = spec, pattern = re WHERE iso2 = norm_cc AND version = cur.version;
-   ELSIF cur.version IS NULL OR cur.pattern <> re THEN
-      -- a different set of codes (or a built-in language, which comes back with the extension and so is never
-      -- edited): the country's next language
+   SELECT l.version, l.source, l.pattern, l.builtin INTO cur FROM postal_code_languages l WHERE l.iso2 = norm_cc ORDER BY l.version DESC LIMIT 1;
+   IF cur.version IS NOT NULL AND postal_code_same_codes(cur.pattern, re) THEN
+      -- the same codes, however written or named: never a new version (which would make different values)
+      IF cur.pattern <> re AND cur.source <> spec THEN      -- (the very spec it was made from: nothing to say, as in 2.0.x)
+         IF cur.builtin THEN
+            -- a built-in language comes back with the extension, so it is never edited
+            RAISE NOTICE 'the built-in language of % already denotes these codes and is kept as it is, with its own part names', norm_cc;
+         ELSE
+            UPDATE postal_code_languages SET source = spec, pattern = re WHERE iso2 = norm_cc AND version = cur.version;
+         END IF;
+      END IF;
+   ELSE
+      -- a different set of codes: the country's next language
       v := coalesce(cur.version, 0) + 1;
       IF v > 51 THEN
          RAISE EXCEPTION 'country % already has 51 postal_code languages, the most there is room for', norm_cc;
@@ -152,8 +188,80 @@ BEGIN
 END;
 $$;
 COMMENT ON FUNCTION add_country_template(text, text) IS
-   'Give a country a pattern for its postal codes: add_country_template(''PL'', ''NN-NNN'') or add_country_template(''TW'', ''/\d{3}(-\d{2,3})?/''). A template is N (a digit), A (a letter), X (either), a space or hyphen, and [ ] around an optional part; a regular expression is written between slashes (see postal_code_pattern.h) and may name parts of the code with (?<name>...). It defines the whole set of the country''s codes. If the country already has a different set of codes this adds a new version of it; values already stored keep the one they were written with. The same codes written or named differently just relabel the current version (unless it is a built-in one). A pattern whose parts could split some code two ways is refused.';
+   'Give a country a pattern for its postal codes: add_country_template(''PL'', ''NN-NNN'') or add_country_template(''TW'', ''/\d{3}(-\d{2,3})?/''). A template is N (a digit), A (a letter), X (either), a space or hyphen, and [ ] around an optional part; a regular expression is written between slashes (see postal_code_pattern.h) and may name parts of the code with (?<name>...). It defines the whole set of the country''s codes. If the country already has a different set of codes this adds a new version of it; values already stored keep the one they were written with. The same codes written or named differently never make a new version: they relabel the current one, or, if it is built in, leave it as it is. A pattern whose parts could split some code two ways is refused.';
 
 -- ---- deprecation ------------------------------------------------------------------------------------------
 COMMENT ON FUNCTION to_char(postcode, text) IS
-   'DEPRECATED since 2.1: cutting a postcode up by format letters is not a sensible way to take it apart (A, D, S and W give the pieces, not Royal Mail''s district and sector). Use part() and prefix_of() on postal_code; ::text renders the text form. Still works, and will not be removed within 2.x.';
+   'DEPRECATED since 2.1: cutting a postcode up by format letters is not a sensible way to take it apart (A, D, S and W give the pieces, not Royal Mail''s district and sector). Use part() and prefix_of(), which take a postcode as well as a postal_code (A, D, S, W are part(pc, ''area''), ''district'', ''sector'', ''walk''; AD is prefix_of(pc, ''district'')); ::text renders the text form. Still works, and will not be removed within 2.x.';
+
+-- BEGIN generated by tools/world_formats.py --parts-sql -- edit that, not this
+-- Name the parts of the built-in patterns. A language is permanent, but its names are labels: the trigger lets a
+-- pattern be rewritten only to one that denotes exactly the same codes, so a slip here stops the upgrade.
+-- Only patterns with real structure are named; the others are one undivided number, or only a display grouping, and have no parts.
+-- AR: province letter + postal number + the three letters naming the face of the block; the old four-digit code has no parts
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<province>[ABCDEFGHJKLMNPQRSTUVWXYZ])(?<number>\d{4})(?<face>[A-Z]{3})?|\d{4}/$p$)
+   WHERE iso2 = 'AR' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<zip5>96799)(-(?<plus4>[1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/$p$)
+   WHERE iso2 = 'AS' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<prefix>[A-Z]{2}) (?<suffix>[0-9A-Z]{2})/$p$)
+   WHERE iso2 = 'BM' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<prefix>[1-9]\d{2})-(?<suffix>\d{4})/$p$)
+   WHERE iso2 = 'CL' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<base>\d{6})(-(?<extension>\d{3}))?/$p$)
+   WHERE iso2 = 'CO' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<base>\d{5})(-(?<extension>\d{4}))?/$p$)
+   WHERE iso2 = 'CR' AND version = 1 AND builtin;
+-- ES: the first two digits are the province (01-52)
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<province>0[1-9]|[1-4]\d|5[0-2])(?<local>\d{3})/$p$)
+   WHERE iso2 = 'ES' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<zip5>9694[1-4])(-(?<plus4>[1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/$p$)
+   WHERE iso2 = 'FM' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<zip5>969\d{2})(-(?<plus4>[1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/$p$)
+   WHERE iso2 = 'GU' AND version = 1 AND builtin;
+-- IR: the ten-digit code, whose first five digits are a locality block, written with an optional hyphen
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<base>\d{5})(-(?<extension>\d{5}))?/$p$)
+   WHERE iso2 = 'IR' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<prefix>\d{3})-(?<suffix>\d{4})/$p$)
+   WHERE iso2 = 'JP' AND version = 1 AND builtin;
+-- KY: KY1, KY2, KY3 are Grand Cayman, Cayman Brac and Little Cayman
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<island>[1-3])-(?<number>\d{4})/$p$)
+   WHERE iso2 = 'KY' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<base>\d{4})( (?<extension>\d{4}))?/$p$)
+   WHERE iso2 = 'LB' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<zip5>969[67]\d)(-(?<plus4>[1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/$p$)
+   WHERE iso2 = 'MH' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<zip5>9695[0-2])(-(?<plus4>[1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/$p$)
+   WHERE iso2 = 'MP' AND version = 1 AND builtin;
+-- MT: a three-letter locality code, then a number
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<locality>[A-Z]{3})( (?<number>\d{4}))?/$p$)
+   WHERE iso2 = 'MT' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<base>\d{4})(-(?<extension>\d{2}))?/$p$)
+   WHERE iso2 = 'MZ' AND version = 1 AND builtin;
+-- NL: four digits, then two letters
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<digits>[1-9]\d{3})( (?<letters>[A-EGHJ-NPRTVWXZ][A-EGHJ-NPRSTVWXZ]|S[BCEGHJ-NPRTVWXZ]))?/$p$)
+   WHERE iso2 = 'NL' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<prefix>\d{2})-(?<suffix>\d{3})/$p$)
+   WHERE iso2 = 'PL' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<zip5>00[6-9]\d{2})(-(?<plus4>[1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/$p$)
+   WHERE iso2 = 'PR' AND version = 1 AND builtin;
+-- PT: the four-digit base (CP4) and the optional three-digit extension (CP3)
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<base>[1-9]\d{3})(-(?<extension>\d{3}))?/$p$)
+   WHERE iso2 = 'PT' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<zip5>96940)(-(?<plus4>[1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/$p$)
+   WHERE iso2 = 'PW' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<base>\d{5})(-(?<extension>\d{4}))?/$p$)
+   WHERE iso2 = 'SA' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<prefix>[A-Z]{2}) (?<suffix>\d{5})/$p$)
+   WHERE iso2 = 'SO' AND version = 1 AND builtin;
+-- TR: the first two digits are the province (01-81; 99 is the north of Cyprus)
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<province>0[1-9]|[1-7]\d|8[01]|99)(?<local>\d{3})/$p$)
+   WHERE iso2 = 'TR' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<base>\d{3})(-(?<extension>\d{2,3}))?/$p$)
+   WHERE iso2 = 'TW' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<zip5>96898)(-(?<plus4>[1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/$p$)
+   WHERE iso2 = 'UM' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<base>\d{4})(-(?<extension>[A-Z]))?/$p$)
+   WHERE iso2 = 'VE' AND version = 1 AND builtin;
+UPDATE postal_code_languages SET pattern = postal_code_pattern_check($p$/(?<zip5>008\d{2})(-(?<plus4>[1-9]\d{3}|0[1-9]\d{2}|00[1-9]\d|000[1-9]))?/$p$)
+   WHERE iso2 = 'VI' AND version = 1 AND builtin;
+-- END generated
