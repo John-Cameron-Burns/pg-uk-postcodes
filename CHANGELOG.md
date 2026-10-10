@@ -1,6 +1,6 @@
 # Changes
 
-## 2.1.0 (not yet released)
+## 2.1.0 (2026-10-10)
 
 **Upgrading from 2.0.x or 1.3.x:** `ALTER EXTENSION postcode UPDATE;`. Nothing stored changes; 2.1.0 only adds. (A rehearsal on a copy of the production database took 123 ms and left 21 million postcodes bit-for-bit identical.)
 
